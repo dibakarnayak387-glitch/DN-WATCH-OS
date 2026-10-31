@@ -29,8 +29,10 @@ jobs:
       - name: Create Flutter Project
         run: flutter create --org com.dnwatch --project-name dn_watch_os .
 
-      - name: Add Bluetooth LE Package
-        run: flutter pub add flutter_blue_plus:2.3.14
+                  - name: Add Bluetooth LE Packages
+        run: |
+          flutter pub add flutter_blue_plus:2.3.14
+          flutter pub add permission_handler
 
       - name: Add Bluetooth Permissions
         run: |
