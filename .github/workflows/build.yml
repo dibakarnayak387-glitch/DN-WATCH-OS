@@ -27,8 +27,29 @@ jobs:
           channel: stable
 
       - name: Create Flutter Project
+        run: flutter create --org com.dnwatch --project-name dn_watch_os .
+
+      - name: Add Bluetooth LE Package
+        run: flutter pub add flutter_blue_plus:2.3.14
+
+      - name: Add Bluetooth Permissions
         run: |
-          flutter create --org com.dnwatch --project-name dn_watch_os .
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path("android/app/src/main/AndroidManifest.xml")
+          s = p.read_text()
+          marker = "    <application"
+          permissions = """    <uses-feature android:name="android.hardware.bluetooth_le" android:required="false" />
+              <uses-permission android:name="android.permission.BLUETOOTH_SCAN" android:usesPermissionFlags="neverForLocation" />
+              <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+              <uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30" />
+              <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" android:maxSdkVersion="30" />
+              <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" android:maxSdkVersion="30" />
+          """
+          if "android.permission.BLUETOOTH_SCAN" not in s:
+              s = s.replace(marker, permissions + marker, 1)
+          p.write_text(s)
+          PY
 
       - name: Get Dependencies
         run: flutter pub get
