@@ -1,5 +1,8 @@
+
 import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
+import 'package:flutter_blue_plus/flutter_blue_plus.dart';
+import 'package:permission_handler/permission_handler.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -20,13 +23,11 @@ class Diagnostics {
       add('FLUTTER ERROR', details.exceptionAsString());
       FlutterError.presentError(details);
     };
-
     ui.PlatformDispatcher.instance.onError = (error, stack) {
       add('SYSTEM ERROR', '$error\n$stack');
       return true;
     };
-
-    add('SYSTEM ONLINE', 'Automatic error monitoring started.');
+    add('SYSTEM ONLINE', 'Error monitoring active.');
   }
 }
 
@@ -58,9 +59,44 @@ class WatchHome extends StatefulWidget {
 }
 
 class _WatchHomeState extends State<WatchHome> {
+  final Color cyan = Colors.cyanAccent;
+
   int selectedIndex = 0;
   bool safetyShield = true;
-  final Color cyan = Colors.cyanAccent;
+  bool scanning = false;
+  bool connecting = false;
+  bool connected = false;
+
+  List<ScanResult> devices = [];
+  List<String> serviceIds = [];
+  BluetoothDevice? connectedDevice;
+
+  @override
+  void initState() {
+    super.initState();
+
+    FlutterBluePlus.onScanResults.listen(
+      (results) {
+        if (!mounted) return;
+        setState(() {
+          devices = results;
+        });
+      },
+      onError: (error) {
+        Diagnostics.add('BLE SCAN ERROR', '$error');
+      },
+    );
+
+    FlutterBluePlus.isScanning.listen((value) {
+      if (mounted) setState(() => scanning = value);
+    });
+  }
+
+  @override
+  void dispose() {
+    FlutterBluePlus.stopScan();
+    super.dispose();
+  }
 
   Widget panel(String title, Widget child, {IconData? icon}) {
     return Container(
@@ -84,7 +120,8 @@ class _WatchHomeState extends State<WatchHome> {
               const SizedBox(width: 10),
             ],
             Text(title, style: TextStyle(
-              color: cyan, fontWeight: FontWeight.bold,
+              color: cyan,
+              fontWeight: FontWeight.bold,
               letterSpacing: 1.2,
             )),
           ]),
@@ -102,29 +139,275 @@ class _WatchHomeState extends State<WatchHome> {
         Icon(icon, color: cyan, size: 20),
         const SizedBox(width: 12),
         Expanded(child: Text(title,
-            style: const TextStyle(color: Colors.white70))),
-        Text(value, style: TextStyle(color: cyan)),
+          style: const TextStyle(color: Colors.white70))),
+        Flexible(child: Text(value,
+          textAlign: TextAlign.end,
+          style: TextStyle(color: cyan))),
       ]),
+    );
+  }
+
+  Widget outlineButton(
+    String label,
+    IconData icon,
+    VoidCallback? action,
+  ) {
+    return SizedBox(
+      width: double.infinity,
+      height: 48,
+      child: OutlinedButton.icon(
+        onPressed: action,
+        icon: Icon(icon),
+        label: Text(label),
+        style: OutlinedButton.styleFrom(
+          foregroundColor: cyan,
+          side: BorderSide(color: cyan, width: 1.3),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(13),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<bool> requestBluetoothPermissions() async {
+    try {
+      final scan = await Permission.bluetoothScan.request();
+      final connect = await Permission.bluetoothConnect.request();
+
+      if (scan.isGranted && connect.isGranted) return true;
+
+      if (scan.isPermanentlyDenied ||
+          connect.isPermanentlyDenied) {
+        if (mounted) {
+          await openAppSettings();
+        }
+      }
+
+      return false;
+    } catch (e) {
+      Diagnostics.add('PERMISSION ERROR', '$e');
+      return false;
+    }
+  }
+
+  Future<void> startBleScan() async {
+    if (scanning) return;
+
+    try {
+      final allowed = await requestBluetoothPermissions();
+
+      if (!allowed) {
+        showMessage('Bluetooth permissions are required.');
+        return;
+      }
+
+      final adapter = await FlutterBluePlus.adapterState.first;
+
+      if (adapter != BluetoothAdapterState.on) {
+        showMessage('Please turn ON phone Bluetooth first.');
+        return;
+      }
+
+      setState(() {
+        devices.clear();
+        serviceIds.clear();
+      });
+
+      Diagnostics.add('BLE SCAN', 'Started scanning for nearby devices.');
+
+      await FlutterBluePlus.startScan(
+        timeout: const Duration(seconds: 15),
+      );
+
+      showMessage('Bluetooth scan started.');
+    } catch (e) {
+      Diagnostics.add('BLE SCAN ERROR', '$e');
+      showMessage('Scan failed: $e');
+    }
+  }
+
+  Future<void> stopBleScan() async {
+    try {
+      await FlutterBluePlus.stopScan();
+    } catch (e) {
+      Diagnostics.add('STOP SCAN ERROR', '$e');
+    }
+  }
+
+  Future<void> connectDevice(BluetoothDevice device) async {
+    if (connecting) return;
+
+    try {
+      await stopBleScan();
+
+      final allowed = await requestBluetoothPermissions();
+      if (!allowed) {
+        showMessage('Bluetooth permission not granted.');
+        return;
+      }
+
+      setState(() {
+        connecting = true;
+        serviceIds.clear();
+      });
+
+      Diagnostics.add(
+        'BLE CONNECT',
+        'Connecting to ${device.remoteId.str}',
+      );
+
+      await device.connect(
+        timeout: const Duration(seconds: 15),
+      );
+
+      final services = await device.discoverServices();
+
+      if (!mounted) return;
+
+      setState(() {
+        connectedDevice = device;
+        connected = true;
+        serviceIds = services
+            .map((service) => service.serviceUuid.str)
+            .toList();
+      });
+
+      Diagnostics.add(
+        'BLE CONNECTED',
+        'Connected. Found ${serviceIds.length} services.',
+      );
+
+      showMessage('Connected. Services discovered.');
+    } catch (e) {
+      Diagnostics.add('BLE CONNECTION ERROR', '$e');
+      showMessage('Connection failed: $e');
+    } finally {
+      if (mounted) setState(() => connecting = false);
+    }
+  }
+
+  Future<void> disconnectWatch() async {
+    try {
+      if (connectedDevice != null) {
+        await connectedDevice!.disconnect();
+      }
+
+      if (!mounted) return;
+
+      setState(() {
+        connected = false;
+        connectedDevice = null;
+        serviceIds.clear();
+      });
+
+      Diagnostics.add('BLE DISCONNECTED', 'Device disconnected safely.');
+      showMessage('Watch disconnected.');
+    } catch (e) {
+      Diagnostics.add('DISCONNECT ERROR', '$e');
+      showMessage('Disconnect error: $e');
+    }
+  }
+
+  void showMessage(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(message)),
+    );
+  }
+
+  Widget deviceCard(ScanResult result) {
+    final device = result.device;
+    final name = result.advertisementData.advName.isNotEmpty
+        ? result.advertisementData.advName
+        : (device.platformName.isNotEmpty
+            ? device.platformName
+            : 'Unknown BLE Device');
+
+    final isAxiom = name.toLowerCase().contains('axiom') ||
+        device.remoteId.str.toUpperCase() == '6F:5F:4B:97:9C:BA';
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 10),
+      padding: const EdgeInsets.all(13),
+      decoration: BoxDecoration(
+        color: const Color(0xFF0B1723),
+        borderRadius: BorderRadius.circular(13),
+        border: Border.all(
+          color: isAxiom ? cyan : Colors.white24,
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(children: [
+            Icon(Icons.bluetooth, color: cyan, size: 25),
+            const SizedBox(width: 10),
+            Expanded(child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(name, style: const TextStyle(
+                  color: Colors.white,
+                  fontWeight: FontWeight.bold,
+                )),
+                Text(device.remoteId.str,
+                  style: const TextStyle(
+                    color: Colors.white54,
+                    fontSize: 11,
+                  )),
+              ],
+            )),
+            Text('${result.rssi} dBm',
+              style: TextStyle(color: cyan, fontSize: 12)),
+          ]),
+          if (isAxiom)
+            const Padding(
+              padding: EdgeInsets.only(top: 8),
+              child: Text('POSSIBLE FIRE-BOLTT AXIOM',
+                style: TextStyle(
+                  color: Colors.greenAccent,
+                  fontSize: 11,
+                  fontWeight: FontWeight.bold,
+                )),
+            ),
+          const SizedBox(height: 10),
+          outlineButton(
+            'CONNECT TO DEVICE',
+            Icons.link,
+            connecting || connected
+                ? null
+                : () => connectDevice(device),
+          ),
+        ],
+      ),
     );
   }
 
   Widget homePage() {
     return ListView(padding: const EdgeInsets.all(18), children: [
       const SizedBox(height: 10),
-      Text('DN WATCH OS', textAlign: TextAlign.center,
-        style: TextStyle(color: cyan, fontSize: 27,
-          fontWeight: FontWeight.bold, letterSpacing: 3)),
+      Text('DN WATCH OS',
+        textAlign: TextAlign.center,
+        style: TextStyle(
+          color: cyan,
+          fontSize: 27,
+          fontWeight: FontWeight.bold,
+          letterSpacing: 3,
+        )),
       const SizedBox(height: 5),
       const Text('OMNI STARK SMART SYSTEM',
         textAlign: TextAlign.center,
         style: TextStyle(color: Colors.white54, letterSpacing: 2)),
       const SizedBox(height: 30),
       Center(child: Container(
-        height: 150, width: 150,
+        height: 150,
+        width: 150,
         decoration: BoxDecoration(
           shape: BoxShape.circle,
           border: Border.all(color: cyan, width: 3),
-          boxShadow: [BoxShadow(color: cyan.withOpacity(.3), blurRadius: 30)],
+          boxShadow: [
+            BoxShadow(color: cyan.withOpacity(.3), blurRadius: 30)
+          ],
         ),
         child: Icon(Icons.watch, size: 85, color: cyan),
       )),
@@ -132,8 +415,10 @@ class _WatchHomeState extends State<WatchHome> {
       panel('SYSTEM STATUS', Column(children: [
         statusRow('Application', 'ONLINE', Icons.phone_android),
         statusRow('Safety Shield',
-            safetyShield ? 'ACTIVE' : 'INACTIVE', Icons.security),
-        statusRow('Bluetooth', 'NOT CONNECTED', Icons.bluetooth),
+          safetyShield ? 'ACTIVE' : 'INACTIVE', Icons.security),
+        statusRow('Bluetooth',
+          connected ? 'CONNECTED' : 'NOT CONNECTED',
+          Icons.bluetooth),
         statusRow('Error Monitor', 'ACTIVE', Icons.monitor_heart),
       ]), icon: Icons.monitor_heart),
       panel('WELCOME, SIR', const Text(
@@ -149,20 +434,82 @@ class _WatchHomeState extends State<WatchHome> {
         const Icon(Icons.watch, color: Colors.cyanAccent, size: 65),
         const SizedBox(height: 12),
         const Text('Fire-Boltt Axiom',
-            style: TextStyle(fontSize: 21, color: Colors.white)),
+          style: TextStyle(fontSize: 21, color: Colors.white)),
         const SizedBox(height: 8),
-        const Text('Connection not started',
-            style: TextStyle(color: Colors.orangeAccent)),
+        Text(
+          connected ? 'CONNECTED' :
+          connecting ? 'CONNECTING...' :
+          scanning ? 'SCANNING NEARBY DEVICES...' :
+          'READY TO SCAN',
+          style: TextStyle(
+            color: connected ? Colors.greenAccent : Colors.orangeAccent,
+            fontWeight: FontWeight.bold,
+          ),
+        ),
         const SizedBox(height: 15),
-        const Text('Bluetooth scanning and connection are not enabled yet.',
-          textAlign: TextAlign.center,
-          style: TextStyle(color: Colors.white60)),
+        outlineButton(
+          scanning ? 'SCANNING...' : 'SCAN NEARBY DEVICES',
+          Icons.bluetooth_searching,
+          scanning || connecting || connected ? null : startBleScan,
+        ),
+        const SizedBox(height: 10),
+        if (scanning)
+          outlineButton('STOP SCAN', Icons.stop, stopBleScan),
+        if (connected) ...[
+          const SizedBox(height: 10),
+          outlineButton(
+            'DISCONNECT WATCH',
+            Icons.link_off,
+            disconnectWatch,
+          ),
+        ],
       ]), icon: Icons.bluetooth),
-      panel('DEVICE INFORMATION', Column(children: [
-        statusRow('Watch model', 'Axiom', Icons.watch),
-        statusRow('Protocol', 'Not verified', Icons.memory),
-        statusRow('Firmware access', 'Disabled', Icons.lock),
-      ]), icon: Icons.info_outline),
+
+      panel('NEARBY BLE DEVICES', Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text('FOUND DEVICES: ${devices.length}',
+            style: TextStyle(color: cyan)),
+          const SizedBox(height: 12),
+          if (devices.isEmpty)
+            const Text(
+              'No devices found yet. Start scanning and keep your watch nearby.',
+              style: TextStyle(color: Colors.white60),
+            )
+          else
+            ...devices.map(deviceCard),
+        ],
+      ), icon: Icons.radar),
+
+      panel('DISCOVERED SERVICES', Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          statusRow('Connection',
+            connected ? 'ACTIVE' : 'INACTIVE',
+            Icons.link),
+          statusRow('Services found',
+            '${serviceIds.length}', Icons.memory),
+          const SizedBox(height: 8),
+          if (serviceIds.isEmpty)
+            const Text(
+              'Connect to a device to discover its services.',
+              style: TextStyle(color: Colors.white54),
+            )
+          else
+            ...serviceIds.map((id) => Padding(
+              padding: const EdgeInsets.symmetric(vertical: 5),
+              child: SelectableText(
+                id.toUpperCase(),
+                style: TextStyle(color: cyan, fontSize: 13),
+              ),
+            )),
+        ],
+      ), icon: Icons.list_alt),
+
+      panel('DEVICE SAFETY', const Text(
+        'This version only scans, connects and discovers BLE services. It does not send unknown commands, write characteristics, change watch settings or flash firmware.',
+        style: TextStyle(color: Colors.orangeAccent, height: 1.5),
+      ), icon: Icons.shield),
     ]);
   }
 
@@ -172,7 +519,7 @@ class _WatchHomeState extends State<WatchHome> {
         Icon(Icons.smart_toy, color: cyan, size: 75),
         const SizedBox(height: 15),
         const Text('JARVIS CORE',
-            style: TextStyle(fontSize: 23, color: Colors.white)),
+          style: TextStyle(fontSize: 23, color: Colors.white)),
         const SizedBox(height: 10),
         const Text('AI assistant integration is planned.',
           textAlign: TextAlign.center,
@@ -187,7 +534,7 @@ class _WatchHomeState extends State<WatchHome> {
         Icon(Icons.wallpaper, color: cyan, size: 65),
         const SizedBox(height: 12),
         const Text('Watch Face Studio',
-            style: TextStyle(color: Colors.white, fontSize: 21)),
+          style: TextStyle(color: Colors.white, fontSize: 21)),
         const SizedBox(height: 10),
         const Text('Custom watch-face transfer is not available yet.',
           textAlign: TextAlign.center,
@@ -202,30 +549,21 @@ class _WatchHomeState extends State<WatchHome> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           const Text(
-            'App errors will be recorded here. You can view the error details and share them for repair.',
+            'App errors will be recorded here. You can view and share error details.',
             style: TextStyle(color: Colors.white70, height: 1.5),
           ),
           const SizedBox(height: 12),
-          OutlinedButton.icon(
-            onPressed: () {
+          outlineButton('RUN SAFE APP CHECK',
+            Icons.health_and_safety, () {
               Diagnostics.add('SAFE CHECK COMPLETED',
-                'App is responsive. BLE and watch protocol have not been tested.');
+                'App is responsive. BLE hardware testing is pending.');
               refresh(() {});
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('Safe check completed')),
-              );
-            },
-            icon: const Icon(Icons.health_and_safety),
-            label: const Text('RUN SAFE APP CHECK'),
-            style: OutlinedButton.styleFrom(
-              foregroundColor: cyan,
-              side: BorderSide(color: cyan),
-              minimumSize: const Size(double.infinity, 48),
-            ),
-          ),
+              showMessage('Safe check completed.');
+            }),
           const SizedBox(height: 10),
           Row(children: [
-            Expanded(child: Text('ERROR LOGS: ${Diagnostics.logs.length}',
+            Expanded(child: Text(
+              'ERROR LOGS: ${Diagnostics.logs.length}',
               style: const TextStyle(color: Colors.white,
                 fontWeight: FontWeight.bold))),
             TextButton(
@@ -249,8 +587,10 @@ class _WatchHomeState extends State<WatchHome> {
                 borderRadius: BorderRadius.circular(10),
               ),
               child: SelectableText(log,
-                style: const TextStyle(color: Colors.orangeAccent,
-                  fontSize: 12)),
+                style: const TextStyle(
+                  color: Colors.orangeAccent,
+                  fontSize: 12,
+                )),
             )),
         ],
       ), icon: Icons.bug_report);
@@ -265,12 +605,12 @@ class _WatchHomeState extends State<WatchHome> {
       const SizedBox(height: 18),
       panel('SAFETY SHIELD', Column(children: [
         Icon(Icons.shield, size: 65,
-            color: safetyShield ? cyan : Colors.orange),
+          color: safetyShield ? cyan : Colors.orange),
         SwitchListTile(
           contentPadding: EdgeInsets.zero,
           title: const Text('Enable Safety Shield'),
           subtitle: const Text(
-            'App preference only; not a BLE firewall yet.',
+            'App preference only; not a BLE firewall.',
             style: TextStyle(color: Colors.white54)),
           value: safetyShield,
           activeColor: cyan,
@@ -281,28 +621,28 @@ class _WatchHomeState extends State<WatchHome> {
       panel('SECURITY RULES', Column(children: [
         statusRow('Unknown commands', 'NOT SENT', Icons.block),
         statusRow('Firmware flashing', 'DISABLED', Icons.lock),
-        statusRow('Unknown BLE writes', 'NOT IMPLEMENTED', Icons.warning),
+        statusRow('Unknown BLE writes', 'DISABLED', Icons.warning),
         statusRow('Watch reset', 'NOT AVAILABLE', Icons.restart_alt),
       ]), icon: Icons.gpp_good),
-      panel('WATCH SAFETY', const Text(
-        'This app does not send Bluetooth write commands to your watch. Unknown commands and unofficial firmware are not used.',
-        style: TextStyle(color: Colors.orangeAccent, height: 1.5),
-      ), icon: Icons.warning_amber),
     ]);
   }
 
   @override
   Widget build(BuildContext context) {
     final pages = [
-      homePage(), watchPage(), jarvisPage(), studioPage(), toolsPage(),
+      homePage(),
+      watchPage(),
+      jarvisPage(),
+      studioPage(),
+      toolsPage(),
     ];
 
     return Scaffold(
       appBar: AppBar(
         backgroundColor: const Color(0xFF081522),
         title: Text('DN WATCH OS',
-          style: TextStyle(color: cyan, fontWeight: FontWeight.bold,
-            letterSpacing: 2)),
+          style: TextStyle(color: cyan,
+            fontWeight: FontWeight.bold, letterSpacing: 2)),
         centerTitle: true,
       ),
       body: pages[selectedIndex],
@@ -314,12 +654,4 @@ class _WatchHomeState extends State<WatchHome> {
             setState(() => selectedIndex = index),
         destinations: const [
           NavigationDestination(icon: Icon(Icons.home), label: 'Home'),
-          NavigationDestination(icon: Icon(Icons.watch), label: 'Watch'),
-          NavigationDestination(icon: Icon(Icons.smart_toy), label: 'JARVIS'),
-          NavigationDestination(icon: Icon(Icons.brush), label: 'Studio'),
-          NavigationDestination(icon: Icon(Icons.security), label: 'Tools'),
-        ],
-      ),
-    );
-  }
-}
+          NavigationDestination(icon: Icon(Icons.watch), label: '
