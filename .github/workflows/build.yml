@@ -30,19 +30,21 @@ jobs:
       - name: Create Flutter Project
         run: flutter create --org com.dnwatch --project-name dn_watch_os .
 
-      - name: Set Android NDK Version
+      - name: Configure Android SDK and NDK
         run: |
           python3 - <<'PY'
           from pathlib import Path
+          import re
+
           p = Path("android/app/build.gradle.kts")
           s = p.read_text()
-          if 'ndkVersion = "27.0.12077973"' not in s:
-              s = s.replace(
-                  "android {",
-                  'android {\n    ndkVersion = "27.0.12077973"',
-                  1
-              )
+
+          s = re.sub(r'compileSdk\s*=\s*[^ \n]+', 'compileSdk = 36', s)
+          s = re.sub(r'minSdk\s*=\s*[^ \n]+', 'minSdk = 24', s)
+          s = re.sub(r'ndkVersion\s*=\s*[^ \n]+', 'ndkVersion = "27.0.12077973"', s)
+
           p.write_text(s)
+          print("Android SDK 36, minSdk 24 and NDK 27 configured.")
           PY
 
       - name: Add Bluetooth LE Packages
@@ -83,3 +85,4 @@ jobs:
         with:
           name: DN-WATCH-OS-APK
           path: build/app/outputs/flutter-apk/app-release.apk
+          
