@@ -49,6 +49,8 @@ jobs:
         run: |
           flutter pub add flutter_blue_plus:2.3.14
           flutter pub add permission_handler:12.0.3
+          flutter pub add speech_to_text
+          flutter pub add flutter_tts
 
       - name: Add Bluetooth Permissions
         run: |
@@ -58,6 +60,7 @@ jobs:
           s = p.read_text()
           marker = "    <application"
           permissions = """    <uses-feature android:name="android.hardware.bluetooth_le" android:required="false" />
+              <uses-permission android:name="android.permission.RECORD_AUDIO" />
               <uses-permission android:name="android.permission.BLUETOOTH_SCAN" android:usesPermissionFlags="neverForLocation" />
               <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
               <uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30" />
