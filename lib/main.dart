@@ -1,3 +1,4 @@
+
 import 'dart:async';
 import 'dart:ui' as ui;
 
@@ -15,10 +16,7 @@ class Diagnostics {
   static final List<String> logs = [];
 
   static void add(String title, String details) {
-    logs.insert(
-      0,
-      '${DateTime.now()}\n$title\n$details',
-    );
+    logs.insert(0, '${DateTime.now()}\n$title\n$details');
     if (logs.length > 50) logs.removeLast();
   }
 
@@ -72,7 +70,6 @@ class _WatchHomeState extends State<WatchHome> {
   final Color cyan = Colors.cyanAccent;
 
   int selectedIndex = 0;
-
   bool safetyShield = true;
   bool scanning = false;
   bool connecting = false;
@@ -105,9 +102,7 @@ class _WatchHomeState extends State<WatchHome> {
     );
 
     scanningSubscription = FlutterBluePlus.isScanning.listen((value) {
-      if (mounted) {
-        setState(() => scanning = value);
-      }
+      if (mounted) setState(() => scanning = value);
     });
   }
 
@@ -120,11 +115,7 @@ class _WatchHomeState extends State<WatchHome> {
     super.dispose();
   }
 
-  Widget panel(
-    String title,
-    Widget child, {
-    IconData? icon,
-  }) {
+  Widget panel(String title, Widget child, {IconData? icon}) {
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.all(18),
@@ -134,10 +125,7 @@ class _WatchHomeState extends State<WatchHome> {
         borderRadius: BorderRadius.circular(18),
         border: Border.all(color: cyan.withOpacity(.4)),
         boxShadow: [
-          BoxShadow(
-            color: cyan.withOpacity(.06),
-            blurRadius: 15,
-          ),
+          BoxShadow(color: cyan.withOpacity(.06), blurRadius: 15),
         ],
       ),
       child: Column(
@@ -176,10 +164,7 @@ class _WatchHomeState extends State<WatchHome> {
           Icon(icon, color: cyan, size: 20),
           const SizedBox(width: 12),
           Expanded(
-            child: Text(
-              title,
-              style: const TextStyle(color: Colors.white70),
-            ),
+            child: Text(title, style: const TextStyle(color: Colors.white70)),
           ),
           Flexible(
             child: Text(
@@ -193,11 +178,7 @@ class _WatchHomeState extends State<WatchHome> {
     );
   }
 
-  Widget outlineButton(
-    String label,
-    IconData icon,
-    VoidCallback? action,
-  ) {
+  Widget outlineButton(String label, IconData icon, VoidCallback? action) {
     return SizedBox(
       width: double.infinity,
       height: 48,
@@ -216,14 +197,23 @@ class _WatchHomeState extends State<WatchHome> {
     );
   }
 
+  void showMessage(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        behavior: SnackBarBehavior.floating,
+        backgroundColor: const Color(0xFF15283A),
+      ),
+    );
+  }
+
   Future<bool> requestBluetoothPermissions() async {
     try {
       final scan = await Permission.bluetoothScan.request();
       final connect = await Permission.bluetoothConnect.request();
 
-      if (scan.isGranted && connect.isGranted) {
-        return true;
-      }
+      if (scan.isGranted && connect.isGranted) return true;
 
       if (scan.isPermanentlyDenied || connect.isPermanentlyDenied) {
         if (mounted) await openAppSettings();
@@ -234,18 +224,6 @@ class _WatchHomeState extends State<WatchHome> {
       Diagnostics.add('PERMISSION ERROR', '$e');
       return false;
     }
-  }
-
-  void showMessage(String message) {
-    if (!mounted) return;
-
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(message),
-        behavior: SnackBarBehavior.floating,
-        backgroundColor: const Color(0xFF15283A),
-      ),
-    );
   }
 
   Future<void> startBleScan() async {
@@ -300,7 +278,6 @@ class _WatchHomeState extends State<WatchHome> {
       await stopBleScan();
 
       final allowed = await requestBluetoothPermissions();
-
       if (!allowed) {
         showMessage('Bluetooth permission not granted.');
         return;
@@ -317,15 +294,16 @@ class _WatchHomeState extends State<WatchHome> {
         'Connecting to ${device.remoteId.str}',
       );
 
+      // Required by flutter_blue_plus 2.3.14.
       await device.connect(
+        license: License.nonprofit,
         timeout: const Duration(seconds: 15),
       );
 
       if (!mounted) return;
 
       connectedDevice = device;
-
-      connectionSubscription?.cancel();
+      await connectionSubscription?.cancel();
 
       connectionSubscription = device.connectionState.listen((state) {
         if (!mounted) return;
@@ -340,10 +318,7 @@ class _WatchHomeState extends State<WatchHome> {
           }
         });
 
-        Diagnostics.add(
-          'CONNECTION STATE',
-          state.toString(),
-        );
+        Diagnostics.add('CONNECTION STATE', state.toString());
       });
 
       final services = await device.discoverServices();
@@ -373,21 +348,16 @@ class _WatchHomeState extends State<WatchHome> {
 
       showMessage('Connection failed: $e');
     } finally {
-      if (mounted) {
-        setState(() => connecting = false);
-      }
+      if (mounted) setState(() => connecting = false);
     }
   }
 
   Future<void> disconnectWatch() async {
     try {
       final device = connectedDevice;
+      if (device != null) await device.disconnect();
 
-      if (device != null) {
-        await device.disconnect();
-      }
-
-      connectionSubscription?.cancel();
+      await connectionSubscription?.cancel();
 
       if (!mounted) return;
 
@@ -413,6 +383,57 @@ class _WatchHomeState extends State<WatchHome> {
         .join('-');
   }
 
+  String decodeText(List<int> bytes) {
+    return String.fromCharCodes(
+      bytes.where((b) => b >= 32 && b <= 126),
+    ).trim();
+  }
+
+  String characteristicName(String uuid) {
+    final id = uuid.replaceAll('-', '').toUpperCase();
+
+    const names = {
+      '2A29': 'Manufacturer Name',
+      '2A24': 'Model Number',
+      '2A25': 'Serial Number',
+      '2A26': 'Firmware Revision',
+      '2A27': 'Hardware Revision',
+      '2A28': 'Software Revision',
+      '2A19': 'Battery Level',
+      '2A37': 'Heart Rate Measurement',
+      '2A38': 'Body Sensor Location',
+    };
+
+    for (final entry in names.entries) {
+      if (id.contains(entry.key)) return entry.value;
+    }
+
+    return 'BLE Characteristic';
+  }
+
+  String interpretValue(String uuid, List<int> bytes) {
+    final id = uuid.replaceAll('-', '').toUpperCase();
+
+    if (bytes.isEmpty) return 'EMPTY';
+
+    if (id.contains('2A19')) {
+      final battery = bytes.first;
+      return battery <= 100 ? '$battery%' : 'Invalid battery value';
+    }
+
+    if (id.contains('2A29') ||
+        id.contains('2A24') ||
+        id.contains('2A25') ||
+        id.contains('2A26') ||
+        id.contains('2A27') ||
+        id.contains('2A28')) {
+      final decoded = decodeText(bytes);
+      if (decoded.isNotEmpty) return decoded;
+    }
+
+    return bytesToHex(bytes);
+  }
+
   Future<void> readSafeInformation() async {
     if (!connected || connectedDevice == null || readingInfo) {
       showMessage('Connect the watch first.');
@@ -431,18 +452,15 @@ class _WatchHomeState extends State<WatchHome> {
 
           try {
             final value = await characteristic.read();
+            final uuid = characteristic.characteristicUuid.str;
 
             final key =
-                '${service.serviceUuid.str} / ${characteristic.characteristicUuid.str}';
+                '${characteristicName(uuid)}\n${service.serviceUuid.str} / $uuid';
 
-            readValues[key] = value.isEmpty
-                ? 'EMPTY'
-                : bytesToHex(value);
-
+            readValues[key] = interpretValue(uuid, value);
             success++;
           } catch (e) {
             failed++;
-
             Diagnostics.add(
               'BLE READ ERROR',
               '${characteristic.characteristicUuid.str}: $e',
@@ -464,9 +482,7 @@ class _WatchHomeState extends State<WatchHome> {
       Diagnostics.add('BLE INFORMATION ERROR', '$e');
       showMessage('Read failed: $e');
     } finally {
-      if (mounted) {
-        setState(() => readingInfo = false);
-      }
+      if (mounted) setState(() => readingInfo = false);
     }
   }
 
@@ -489,9 +505,7 @@ class _WatchHomeState extends State<WatchHome> {
       decoration: BoxDecoration(
         color: const Color(0xFF0B1723),
         borderRadius: BorderRadius.circular(13),
-        border: Border.all(
-          color: isAxiom ? cyan : Colors.white24,
-        ),
+        border: Border.all(color: isAxiom ? cyan : Colors.white24),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -521,10 +535,8 @@ class _WatchHomeState extends State<WatchHome> {
                   ],
                 ),
               ),
-              Text(
-                '${result.rssi} dBm',
-                style: TextStyle(color: cyan, fontSize: 12),
-              ),
+              Text('${result.rssi} dBm',
+                  style: TextStyle(color: cyan, fontSize: 12)),
             ],
           ),
           if (isAxiom)
@@ -680,10 +692,8 @@ class _WatchHomeState extends State<WatchHome> {
           Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(
-                'FOUND DEVICES: ${devices.length}',
-                style: TextStyle(color: cyan),
-              ),
+              Text('FOUND DEVICES: ${devices.length}',
+                  style: TextStyle(color: cyan)),
               const SizedBox(height: 12),
               if (devices.isEmpty)
                 const Text(
@@ -718,15 +728,13 @@ class _WatchHomeState extends State<WatchHome> {
                   style: TextStyle(color: Colors.white54),
                 )
               else
-                ...discoveredServices.map((service) {
-                  return Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 5),
-                    child: SelectableText(
-                      service.serviceUuid.str.toUpperCase(),
-                      style: TextStyle(color: cyan, fontSize: 13),
-                    ),
-                  );
-                }),
+                ...discoveredServices.map((service) => Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 5),
+                      child: SelectableText(
+                        service.serviceUuid.str.toUpperCase(),
+                        style: TextStyle(color: cyan, fontSize: 13),
+                      ),
+                    )),
             ],
           ),
           icon: Icons.list_alt,
@@ -739,45 +747,40 @@ class _WatchHomeState extends State<WatchHome> {
               children: readValues.entries.map((entry) {
                 return Container(
                   width: double.infinity,
-                  margin: const EdgeInsets.only(bottom: 10),
+                  margin: const EdgeInsets.only(bottom: 9),
                   padding: const EdgeInsets.all(10),
                   decoration: BoxDecoration(
-                    border: Border.all(color: Colors.white24),
+                    color: const Color(0xFF0B1723),
                     borderRadius: BorderRadius.circular(10),
+                    border: Border.all(color: Colors.white24),
                   ),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      SelectableText(
+                      Text(
                         entry.key,
                         style: TextStyle(
                           color: cyan,
-                          fontSize: 11,
+                          fontWeight: FontWeight.bold,
+                          fontSize: 12,
                         ),
                       ),
                       const SizedBox(height: 6),
                       SelectableText(
                         entry.value,
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 12,
-                        ),
+                        style: const TextStyle(color: Colors.white70),
                       ),
                     ],
                   ),
                 );
               }).toList(),
             ),
-            icon: Icons.data_object,
           ),
         panel(
           'DEVICE SAFETY',
           const Text(
-            'This version scans, connects, discovers BLE services and reads characteristics marked as readable. It does not send unknown commands, write characteristics, change watch settings or flash firmware.',
-            style: TextStyle(
-              color: Colors.orangeAccent,
-              height: 1.5,
-            ),
+            'This module only scans, connects, discovers services and reads characteristics marked as readable. It does not send unknown commands, write characteristics, change watch settings or flash firmware.',
+            style: TextStyle(color: Colors.orangeAccent, height: 1.5),
           ),
           icon: Icons.shield,
         ),
@@ -801,25 +804,9 @@ class _WatchHomeState extends State<WatchHome> {
               ),
               const SizedBox(height: 10),
               const Text(
-                'Standalone watch AI is not enabled yet. Hardware and firmware compatibility must be verified first.',
+                'AI assistant integration is planned. Standalone watch AI requires compatible watch hardware and software support.',
                 textAlign: TextAlign.center,
                 style: TextStyle(color: Colors.white60, height: 1.5),
-              ),
-              const SizedBox(height: 15),
-              statusRow(
-                'Watch connection',
-                connected ? 'ACTIVE' : 'INACTIVE',
-                Icons.bluetooth,
-              ),
-              statusRow(
-                'AI engine',
-                'NOT INSTALLED',
-                Icons.psychology,
-              ),
-              statusRow(
-                'Internet',
-                'NOT REQUIRED FOR THIS PAGE',
-                Icons.cloud_off,
               ),
             ],
           ),
@@ -845,13 +832,13 @@ class _WatchHomeState extends State<WatchHome> {
               ),
               const SizedBox(height: 10),
               const Text(
-                'Custom watch-face transfer is not available yet.',
+                'Watch-face transfer is not available in this version.',
                 textAlign: TextAlign.center,
                 style: TextStyle(color: Colors.white60),
               ),
             ],
           ),
-          icon: Icons.brush,
+          icon: Icons.tune,
         ),
       ],
     );
@@ -866,7 +853,7 @@ class _WatchHomeState extends State<WatchHome> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               const Text(
-                'App errors are recorded here.',
+                'Application errors are recorded here.',
                 style: TextStyle(color: Colors.white70, height: 1.5),
               ),
               const SizedBox(height: 12),
@@ -875,11 +862,11 @@ class _WatchHomeState extends State<WatchHome> {
                 Icons.health_and_safety,
                 () {
                   Diagnostics.add(
-                    'SAFE CHECK COMPLETED',
-                    'App is responsive. BLE connection: $connected.',
+                    'SAFE CHECK',
+                    'Application check completed. This does not test watch CPU or RAM.',
                   );
                   refresh(() {});
-                  showMessage('Safe check completed.');
+                  showMessage('Safe app check completed.');
                 },
               ),
               const SizedBox(height: 10),
@@ -909,24 +896,22 @@ class _WatchHomeState extends State<WatchHome> {
                   style: TextStyle(color: Colors.greenAccent),
                 )
               else
-                ...Diagnostics.logs.take(10).map((log) {
-                  return Container(
-                    width: double.infinity,
-                    margin: const EdgeInsets.only(top: 8),
-                    padding: const EdgeInsets.all(10),
-                    decoration: BoxDecoration(
-                      border: Border.all(color: Colors.white24),
-                      borderRadius: BorderRadius.circular(10),
-                    ),
-                    child: SelectableText(
-                      log,
-                      style: const TextStyle(
-                        color: Colors.orangeAccent,
-                        fontSize: 12,
+                ...Diagnostics.logs.take(10).map((log) => Container(
+                      width: double.infinity,
+                      margin: const EdgeInsets.only(top: 8),
+                      padding: const EdgeInsets.all(10),
+                      decoration: BoxDecoration(
+                        border: Border.all(color: Colors.white24),
+                        borderRadius: BorderRadius.circular(10),
                       ),
-                    ),
-                  );
-                }),
+                      child: SelectableText(
+                        log,
+                        style: const TextStyle(
+                          color: Colors.orangeAccent,
+                          fontSize: 12,
+                        ),
+                      ),
+                    )),
             ],
           ),
           icon: Icons.bug_report,
@@ -966,9 +951,7 @@ class _WatchHomeState extends State<WatchHome> {
                 ),
                 value: safetyShield,
                 activeColor: cyan,
-                onChanged: (value) {
-                  setState(() => safetyShield = value);
-                },
+                onChanged: (value) => setState(() => safetyShield = value),
               ),
             ],
           ),
@@ -986,6 +969,14 @@ class _WatchHomeState extends State<WatchHome> {
             ],
           ),
           icon: Icons.gpp_good,
+        ),
+        panel(
+          'HARDWARE INFORMATION LIMITS',
+          const Text(
+            'Standard BLE services may expose manufacturer, model, firmware and battery information. CPU model, RAM size, internal storage and bootloader details cannot be confirmed unless the watch firmware provides them.',
+            style: TextStyle(color: Colors.orangeAccent, height: 1.5),
+          ),
+          icon: Icons.memory,
         ),
       ],
     );
@@ -1019,29 +1010,36 @@ class _WatchHomeState extends State<WatchHome> {
         children: pages,
       ),
       bottomNavigationBar: NavigationBar(
+        backgroundColor: const Color(0xFF081522),
+        indicatorColor: cyan.withOpacity(.15),
         selectedIndex: selectedIndex,
         onDestinationSelected: (index) {
           setState(() => selectedIndex = index);
         },
         destinations: const [
           NavigationDestination(
-            icon: Icon(Icons.home),
+            icon: Icon(Icons.home_outlined),
+            selectedIcon: Icon(Icons.home),
             label: 'Home',
           ),
           NavigationDestination(
-            icon: Icon(Icons.watch),
+            icon: Icon(Icons.watch_outlined),
+            selectedIcon: Icon(Icons.watch),
             label: 'Watch',
           ),
           NavigationDestination(
-            icon: Icon(Icons.smart_toy),
+            icon: Icon(Icons.smart_toy_outlined),
+            selectedIcon: Icon(Icons.smart_toy),
             label: 'JARVIS',
           ),
           NavigationDestination(
-            icon: Icon(Icons.brush),
+            icon: Icon(Icons.tune_outlined),
+            selectedIcon: Icon(Icons.tune),
             label: 'Studio',
           ),
           NavigationDestination(
-            icon: Icon(Icons.security),
+            icon: Icon(Icons.security_outlined),
+            selectedIcon: Icon(Icons.security),
             label: 'Tools',
           ),
         ],
