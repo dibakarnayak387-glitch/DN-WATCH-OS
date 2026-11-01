@@ -1,4 +1,3 @@
-
 import 'dart:async';
 import 'dart:ui' as ui;
 
@@ -90,6 +89,7 @@ class _WatchHomeState extends State<WatchHome> {
   final Map<String, String> readValues = {};
 
   // JARVIS VOICE CORE
+
   final stt.SpeechToText speech = stt.SpeechToText();
   final FlutterTts tts = FlutterTts();
 
@@ -129,7 +129,7 @@ class _WatchHomeState extends State<WatchHome> {
     super.dispose();
   }
 
-  // ---------------- JARVIS VOICE FUNCTIONS ----------------
+  // JARVIS VOICE FUNCTIONS
 
   Future<void> initializeVoice() async {
     try {
@@ -282,7 +282,7 @@ class _WatchHomeState extends State<WatchHome> {
     if (mounted) setState(() => isListening = false);
   }
 
-  // ---------------- COMMON UI ----------------
+  // COMMON UI
 
   Widget panel(String title, Widget child, {IconData? icon}) {
     return Container(
@@ -368,6 +368,7 @@ class _WatchHomeState extends State<WatchHome> {
 
   void showMessage(String message) {
     if (!mounted) return;
+
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(message),
@@ -376,244 +377,247 @@ class _WatchHomeState extends State<WatchHome> {
       ),
     );
   }
-
-  // ---------------- BLUETOOTH FUNCTIONS ----------------
+    // ==========================================
+  // BLUETOOTH PERMISSIONS
+  // ==========================================
 
   Future<bool> requestBluetoothPermissions() async {
     try {
-      final scan = await Permission.bluetoothScan.request();
-      final connect = await Permission.bluetoothConnect.request();
+      final permissions = await [
+        Permission.bluetoothScan,
+        Permission.bluetoothConnect,
+        Permission.locationWhenInUse,
+      ].request();
 
-      if (scan.isGranted && connect.isGranted) return true;
+      final granted = permissions.values.every(
+        (status) => status.isGranted,
+      );
 
-      if (scan.isPermanentlyDenied || connect.isPermanentlyDenied) {
-        if (mounted) await openAppSettings();
+      if (!granted) {
+        showMessage('Bluetooth permissions are required.');
       }
 
-      return false;
+      return granted;
     } catch (e) {
-      Diagnostics.add('PERMISSION ERROR', '$e');
+      showMessage('Permission error: $e');
       return false;
     }
   }
 
+  // ==========================================
+  // BLE SCANNER
+  // ==========================================
+
   Future<void> startBleScan() async {
-    if (scanning || connecting || connected) return;
+    if (scanning) return;
+
+    final permissionGranted = await requestBluetoothPermissions();
+    if (!permissionGranted) return;
 
     try {
-      final allowed = await requestBluetoothPermissions();
-
-      if (!allowed) {
-        showMessage('Bluetooth permissions are required.');
-        return;
-      }
-
-      final adapter = await FlutterBluePlus.adapterState.first;
-
-      if (adapter != BluetoothAdapterState.on) {
-        showMessage('Please turn ON phone Bluetooth first.');
-        return;
-      }
-
       setState(() {
+        scanning = true;
         devices.clear();
-        discoveredServices.clear();
-        readValues.clear();
       });
 
-      Diagnostics.add('BLE SCAN', 'Started nearby device scan.');
-
       await FlutterBluePlus.startScan(
-        timeout: const Duration(seconds: 15),
+        timeout: const Duration(seconds: 12),
       );
 
-      showMessage('Bluetooth scan started.');
+      FlutterBluePlus.scanResults.listen((results) {
+        if (!mounted) return;
+
+        setState(() {
+          for (final result in results) {
+            final device = result.device;
+
+            final exists = devices.any(
+              (item) => item.remoteId == device.remoteId,
+            );
+
+            if (!exists) {
+              devices.add(device);
+            }
+          }
+        });
+      });
+
+      await Future.delayed(const Duration(seconds: 12));
+
+      if (!mounted) return;
+
+      setState(() {
+        scanning = false;
+      });
     } catch (e) {
-      Diagnostics.add('BLE SCAN ERROR', '$e');
-      showMessage('Scan failed: $e');
+      if (!mounted) return;
+
+      setState(() {
+        scanning = false;
+      });
+
+      showMessage('Bluetooth scan failed: $e');
     }
   }
 
   Future<void> stopBleScan() async {
     try {
       await FlutterBluePlus.stopScan();
-    } catch (e) {
-      Diagnostics.add('STOP SCAN ERROR', '$e');
-    }
-  }
-
-  Future<void> connectDevice(BluetoothDevice device) async {
-    if (connecting || connected) return;
-
-    try {
-      await stopBleScan();
-
-      final allowed = await requestBluetoothPermissions();
-      if (!allowed) {
-        showMessage('Bluetooth permission not granted.');
-        return;
-      }
-
-      setState(() {
-        connecting = true;
-        discoveredServices.clear();
-        readValues.clear();
-      });
-
-      Diagnostics.add(
-        'BLE CONNECT',
-        'Connecting to ${device.remoteId.str}',
-      );
-
-      await device.connect(
-        license: License.nonprofit,
-        timeout: const Duration(seconds: 15),
-      );
 
       if (!mounted) return;
 
-      connectedDevice = device;
-      await connectionSubscription?.cancel();
-
-      connectionSubscription = device.connectionState.listen((state) {
-        if (!mounted) return;
-
-        setState(() {
-          connected = state == BluetoothConnectionState.connected;
-
-          if (!connected) {
-            connectedDevice = null;
-            discoveredServices.clear();
-            readValues.clear();
-          }
-        });
-
-        Diagnostics.add('CONNECTION STATE', state.toString());
+      setState(() {
+        scanning = false;
       });
+    } catch (e) {
+      showMessage('Unable to stop scan: $e');
+    }
+  }
+
+  // ==========================================
+  // CONNECT WATCH
+  // ==========================================
+
+  Future<void> connectDevice(BluetoothDevice device) async {
+    if (connecting) return;
+
+    setState(() {
+      connecting = true;
+    });
+
+    try {
+      await device.connect(
+        timeout: const Duration(seconds: 15),
+        autoConnect: false,
+      );
+
+      connectedDevice = device;
 
       final services = await device.discoverServices();
 
       if (!mounted) return;
 
       setState(() {
-        discoveredServices = services;
         connected = true;
+        connecting = false;
+        discoveredServices = services;
+        readValues.clear();
       });
 
-      Diagnostics.add(
-        'BLE CONNECTED',
-        'Found ${services.length} services.',
-      );
+      showMessage('Watch connected successfully.');
 
-      showMessage('Watch connected. Services discovered.');
+      await readSafeInformation();
     } catch (e) {
-      Diagnostics.add('BLE CONNECTION ERROR', '$e');
+      if (!mounted) return;
 
-      if (mounted) {
-        setState(() {
-          connected = false;
-          connectedDevice = null;
-        });
-      }
+      setState(() {
+        connecting = false;
+        connected = false;
+      });
 
       showMessage('Connection failed: $e');
-    } finally {
-      if (mounted) setState(() => connecting = false);
     }
   }
 
+  // ==========================================
+  // DISCONNECT WATCH
+  // ==========================================
+
   Future<void> disconnectWatch() async {
     try {
-      final device = connectedDevice;
-      if (device != null) await device.disconnect();
-
-      await connectionSubscription?.cancel();
+      if (connectedDevice != null) {
+        await connectedDevice!.disconnect();
+      }
 
       if (!mounted) return;
 
       setState(() {
         connected = false;
         connecting = false;
+        readingInfo = false;
         connectedDevice = null;
         discoveredServices.clear();
         readValues.clear();
       });
 
-      Diagnostics.add('BLE DISCONNECTED', 'Disconnected safely.');
       showMessage('Watch disconnected.');
     } catch (e) {
-      Diagnostics.add('DISCONNECT ERROR', '$e');
       showMessage('Disconnect error: $e');
     }
   }
 
+  // ==========================================
+  // BLE DATA HELPERS
+  // ==========================================
+
   String bytesToHex(List<int> bytes) {
     return bytes
-        .map((b) => b.toRadixString(16).padLeft(2, '0').toUpperCase())
-        .join('-');
+        .map((value) => value.toRadixString(16).padLeft(2, '0'))
+        .join('-')
+        .toUpperCase();
   }
 
   String decodeText(List<int> bytes) {
-    return String.fromCharCodes(
-      bytes.where((b) => b >= 32 && b <= 126),
-    ).trim();
+    try {
+      return String.fromCharCodes(bytes)
+          .replaceAll(RegExp(r'[\x00-\x1F]'), '')
+          .trim();
+    } catch (_) {
+      return '';
+    }
   }
 
-  String characteristicName(String uuid) {
-    final id = uuid.replaceAll('-', '').toUpperCase();
+  String characteristicName(Guid uuid) {
+    final value = uuid.str.toUpperCase();
 
-    const names = {
-      '2A29': 'Manufacturer Name',
-      '2A24': 'Model Number',
-      '2A25': 'Serial Number',
-      '2A26': 'Firmware Revision',
-      '2A27': 'Hardware Revision',
-      '2A28': 'Software Revision',
-      '2A19': 'Battery Level',
-      '2A37': 'Heart Rate Measurement',
-      '2A38': 'Body Sensor Location',
-    };
-
-    for (final entry in names.entries) {
-      if (id.contains(entry.key)) return entry.value;
+    switch (value) {
+      case '00002A29-0000-1000-8000-00805F9B34FB':
+        return 'Manufacturer Name';
+      case '00002A24-0000-1000-8000-00805F9B34FB':
+        return 'Model Number';
+      case '00002A26-0000-1000-8000-00805F9B34FB':
+        return 'Firmware Revision';
+      case '00002A27-0000-1000-8000-00805F9B34FB':
+        return 'Hardware Revision';
+      case '00002A28-0000-1000-8000-00805F9B34FB':
+        return 'Software Revision';
+      case '00002A25-0000-1000-8000-00805F9B34FB':
+        return 'Serial Number';
+      default:
+        return 'BLE Characteristic';
     }
-
-    return 'BLE Characteristic';
   }
 
-  String interpretValue(String uuid, List<int> bytes) {
-    final id = uuid.replaceAll('-', '').toUpperCase();
+  String interpretValue(List<int> value) {
+    if (value.isEmpty) return 'EMPTY';
 
-    if (bytes.isEmpty) return 'EMPTY';
+    final text = decodeText(value);
 
-    if (id.contains('2A19')) {
-      final battery = bytes.first;
-      return battery <= 100 ? '$battery%' : 'Invalid battery value';
+    if (text.isNotEmpty &&
+        text.runes.every((rune) => rune >= 32 && rune <= 126)) {
+      return text;
     }
 
-    if (id.contains('2A29') ||
-        id.contains('2A24') ||
-        id.contains('2A25') ||
-        id.contains('2A26') ||
-        id.contains('2A27') ||
-        id.contains('2A28')) {
-      final decoded = decodeText(bytes);
-      if (decoded.isNotEmpty) return decoded;
-    }
-
-    return bytesToHex(bytes);
+    return bytesToHex(value);
   }
+
+  // ==========================================
+  // SAFE INFORMATION READER
+  // READ ONLY - NO UNKNOWN BLE COMMANDS
+  // ==========================================
 
   Future<void> readSafeInformation() async {
-    if (!connected || connectedDevice == null || readingInfo) {
-      showMessage('Connect the watch first.');
+    if (!connected || connectedDevice == null) {
+      showMessage('Connect your watch first.');
       return;
     }
 
-    setState(() => readingInfo = true);
+    if (readingInfo) return;
 
-    int success = 0;
-    int failed = 0;
+    setState(() {
+      readingInfo = true;
+      readValues.clear();
+    });
 
     try {
       for (final service in discoveredServices) {
@@ -622,686 +626,931 @@ class _WatchHomeState extends State<WatchHome> {
 
           try {
             final value = await characteristic.read();
-            final uuid = characteristic.characteristicUuid.str;
 
-            final key =
-                '${characteristicName(uuid)}\n${service.serviceUuid.str} / $uuid';
+            if (value.isNotEmpty) {
+              final label = characteristicName(
+                characteristic.uuid,
+              );
 
-            readValues[key] = interpretValue(uuid, value);
-            success++;
+              final serviceId = service.uuid.str;
+              final characteristicId = characteristic.uuid.str;
+
+              readValues[
+                '$label | $serviceId | $characteristicId'
+              ] = interpretValue(value);
+            }
           } catch (e) {
-            failed++;
-            Diagnostics.add(
-              'BLE READ ERROR',
-              '${characteristic.characteristicUuid.str}: $e',
-            );
+            debugPrint('Read skipped: $e');
           }
         }
       }
 
-      Diagnostics.add(
-        'BLE READ COMPLETE',
-        'Successful: $success | Failed: $failed',
-      );
+      if (!mounted) return;
 
-      if (mounted) {
-        setState(() {});
-        showMessage('Read complete: $success successful, $failed failed.');
-      }
+      showMessage('Safe device information scan completed.');
     } catch (e) {
-      Diagnostics.add('BLE INFORMATION ERROR', '$e');
-      showMessage('Read failed: $e');
+      showMessage('Information scan error: $e');
     } finally {
-      if (mounted) setState(() => readingInfo = false);
+      if (mounted) {
+        setState(() {
+          readingInfo = false;
+        });
+      }
     }
   }
 
-  Widget deviceCard(ScanResult result) {
-    final device = result.device;
+  // ==========================================
+  // FIRMWARE FINGERPRINT SCANNER
+  // READ ONLY ANALYSIS
+  // ==========================================
 
-    final name = result.advertisementData.advName.isNotEmpty
-        ? result.advertisementData.advName
-        : (device.platformName.isNotEmpty
-            ? device.platformName
-            : 'Unknown BLE Device');
+  Widget firmwareFingerprintPanel() {
+    String findValue(String label) {
+      for (final entry in readValues.entries) {
+        if (entry.key.toLowerCase().startsWith(
+              label.toLowerCase(),
+            )) {
+          return entry.value;
+        }
+      }
 
-    final isAxiom =
-        name.toLowerCase().contains('axiom') ||
-        device.remoteId.str.toUpperCase() == '6F:5F:4B:97:9C:BA';
+      return 'NOT DETECTED';
+    }
 
-    return Container(
-      margin: const EdgeInsets.only(bottom: 10),
-      padding: const EdgeInsets.all(13),
-      decoration: BoxDecoration(
-        color: const Color(0xFF0B1723),
-        borderRadius: BorderRadius.circular(13),
-        border: Border.all(color: isAxiom ? cyan : Colors.white24),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Icon(Icons.bluetooth, color: cyan, size: 25),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      name,
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                    Text(
-                      device.remoteId.str,
-                      style: const TextStyle(
-                        color: Colors.white54,
-                        fontSize: 11,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              Text(
-                '${result.rssi} dBm',
-                style: TextStyle(color: cyan, fontSize: 12),
-              ),
-            ],
-          ),
-          if (isAxiom)
-            const Padding(
-              padding: EdgeInsets.only(top: 8),
+    final manufacturer = findValue('Manufacturer Name');
+    final model = findValue('Model Number');
+    final firmware = findValue('Firmware Revision');
+    final hardware = findValue('Hardware Revision');
+    final software = findValue('Software Revision');
+
+    final feeaServices = discoveredServices.where(
+      (service) => service.uuid.str
+          .toUpperCase()
+          .replaceAll('-', '')
+          .contains('FEEA'),
+    ).toList();
+
+    final characteristics = feeaServices
+        .expand((service) => service.characteristics)
+        .toList();
+
+    final feeaFound = feeaServices.isNotEmpty;
+
+    final canRead = characteristics.any(
+      (characteristic) => characteristic.properties.read,
+    );
+
+    final canWrite = characteristics.any(
+      (characteristic) =>
+          characteristic.properties.write ||
+          characteristic.properties.writeWithoutResponse,
+    );
+
+    final canNotify = characteristics.any(
+      (characteristic) =>
+          characteristic.properties.notify ||
+          characteristic.properties.indicate,
+    );
+
+    final platform = (
+      manufacturer.toUpperCase().contains('MOYOUNG') ||
+      firmware.toUpperCase().contains('MOY') ||
+      software.toUpperCase().contains('MOY')
+    )
+        ? 'MOYOUNG FAMILY INDICATOR'
+        : 'NOT CONFIRMED';
+
+    final compatibility = !connected
+        ? 'CONNECT WATCH FIRST'
+        : !feeaFound
+            ? 'FEEA SERVICE NOT FOUND'
+            : 'BLE PROTOCOL FOUND - APP SUPPORT UNKNOWN';
+
+    Widget resultRow(String title, String value) {
+      return Padding(
+        padding: const EdgeInsets.symmetric(vertical: 7),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Expanded(
+              flex: 4,
               child: Text(
-                'POSSIBLE FIRE-BOLTT AXIOM',
-                style: TextStyle(
-                  color: Colors.greenAccent,
-                  fontSize: 11,
-                  fontWeight: FontWeight.bold,
+                title,
+                style: const TextStyle(
+                  color: Colors.white60,
+                  fontSize: 12,
                 ),
               ),
             ),
+            Expanded(
+              flex: 5,
+              child: Text(
+                value,
+                textAlign: TextAlign.right,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    Widget capabilityRow(String title, bool available) {
+      return Padding(
+        padding: const EdgeInsets.symmetric(vertical: 6),
+        child: Row(
+          children: [
+            Icon(
+              available ? Icons.check_circle : Icons.cancel,
+              size: 17,
+              color: available ? Colors.greenAccent : Colors.redAccent,
+            ),
+            const SizedBox(width: 9),
+            Expanded(
+              child: Text(
+                title,
+                style: const TextStyle(
+                  color: Colors.white70,
+                  fontSize: 12,
+                ),
+              ),
+            ),
+            Text(
+              available ? 'AVAILABLE' : 'NOT FOUND',
+              style: TextStyle(
+                color: available ? Colors.greenAccent : Colors.redAccent,
+                fontSize: 10,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    return panel(
+      'FIRMWARE FINGERPRINT SCANNER',
+      Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Icon(
+            Icons.memory,
+            color: Colors.cyanAccent,
+            size: 35,
+          ),
+          const SizedBox(height: 12),
+
+          const Text(
+            'DEVICE IDENTITY',
+            style: TextStyle(
+              color: Colors.cyanAccent,
+              fontWeight: FontWeight.bold,
+              fontSize: 12,
+            ),
+          ),
+          const SizedBox(height: 8),
+
+          resultRow('Manufacturer', manufacturer),
+          resultRow('Model', model),
+          resultRow('Firmware', firmware),
+          resultRow('Hardware', hardware),
+          resultRow('Software', software),
+
+          const Divider(color: Colors.white12, height: 25),
+
+          const Text(
+            'PLATFORM ANALYSIS',
+            style: TextStyle(
+              color: Colors.cyanAccent,
+              fontWeight: FontWeight.bold,
+              fontSize: 12,
+            ),
+          ),
           const SizedBox(height: 10),
-          outlineButton(
-            'CONNECT TO DEVICE',
-            Icons.link,
-            connecting || connected ? null : () => connectDevice(device),
+
+          resultRow('Platform indicator', platform),
+          resultRow('FEEA service', feeaFound ? 'DETECTED' : 'NOT FOUND'),
+          resultRow('Compatibility', compatibility),
+
+          const Divider(color: Colors.white12, height: 25),
+
+          const Text(
+            'BLE CAPABILITIES',
+            style: TextStyle(
+              color: Colors.cyanAccent,
+              fontWeight: FontWeight.bold,
+              fontSize: 12,
+            ),
+          ),
+          const SizedBox(height: 8),
+
+          capabilityRow('Read capability', canRead),
+          capabilityRow('Write capability', canWrite),
+          capabilityRow('Notify / Indicate', canNotify),
+
+          const SizedBox(height: 12),
+
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: Colors.orange.withOpacity(0.08),
+              border: Border.all(
+                color: Colors.orangeAccent.withOpacity(0.5),
+              ),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: const Text(
+              'SAFETY NOTICE\n'
+              'This scanner only reads available device information. '
+              'BLE capabilities do not confirm third-party app support, '
+              'watch CPU, RAM, operating system, or standalone AI support. '
+              'No unknown commands or firmware changes are performed.',
+              style: TextStyle(
+                color: Colors.orangeAccent,
+                fontSize: 11,
+                height: 1.5,
+              ),
+            ),
+          ),
+
+          const SizedBox(height: 12),
+
+          SizedBox(
+            width: double.infinity,
+            child: outlineButton(
+              readingInfo ? 'SCANNING...' : 'SCAN DEVICE AGAIN',
+              readingInfo ? null : readSafeInformation,
+            ),
           ),
         ],
       ),
     );
   }
 
-  // ---------------- HOME PAGE ----------------
+  // ==========================================
+  // BLE DEVICE CARD
+  // ==========================================
+
+  Widget deviceCard(BluetoothDevice device) {
+    final name = device.platformName.isNotEmpty
+        ? device.platformName
+        : 'Unknown BLE Device';
+
+    final isThisDevice =
+        connectedDevice?.remoteId == device.remoteId;
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 10),
+      padding: const EdgeInsets.all(13),
+      decoration: BoxDecoration(
+        color: const Color(0xFF101D2B),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(
+          color: isThisDevice
+              ? Colors.cyanAccent
+              : Colors.white24,
+        ),
+      ),
+      child: Row(
+        children: [
+          const Icon(
+            Icons.watch,
+            color: Colors.cyanAccent,
+            size: 28,
+          ),
+          const SizedBox(width: 12),
+
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  name,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  device.remoteId.str,
+                  style: const TextStyle(
+                    color: Colors.white54,
+                    fontSize: 10,
+                  ),
+                ),
+              ],
+            ),
+          ),
+
+          SizedBox(
+            width: 100,
+            child: outlineButton(
+              isThisDevice
+                  ? 'CONNECTED'
+                  : connecting
+                      ? 'WAIT...'
+                      : 'CONNECT',
+              isThisDevice || connecting
+                  ? null
+                  : () => connectDevice(device),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+    // ==========================================
+  // HOME PAGE
+  // ==========================================
 
   Widget homePage() {
-    return ListView(
-      padding: const EdgeInsets.all(18),
-      children: [
-        const SizedBox(height: 10),
-        Text(
-          'DN WATCH OS',
-          textAlign: TextAlign.center,
-          style: TextStyle(
-            color: cyan,
-            fontSize: 27,
-            fontWeight: FontWeight.bold,
-            letterSpacing: 3,
-          ),
-        ),
-        const SizedBox(height: 5),
-        const Text(
-          'OMNI STARK SMART SYSTEM',
-          textAlign: TextAlign.center,
-          style: TextStyle(color: Colors.white54, letterSpacing: 2),
-        ),
-        const SizedBox(height: 30),
-        Center(
-          child: Container(
-            height: 150,
-            width: 150,
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              border: Border.all(color: cyan, width: 3),
-              boxShadow: [
-                BoxShadow(color: cyan.withOpacity(.3), blurRadius: 30),
-              ],
-            ),
-            child: Icon(Icons.watch, size: 85, color: cyan),
-          ),
-        ),
-        const SizedBox(height: 25),
-        panel(
-          'SYSTEM STATUS',
-          Column(
-            children: [
-              statusRow('Application', 'ONLINE', Icons.phone_android),
-              statusRow(
-                'Safety Shield',
-                safetyShield ? 'ACTIVE' : 'INACTIVE',
-                Icons.security,
-              ),
-              statusRow(
-                'Bluetooth',
-                connected ? 'CONNECTED' : 'NOT CONNECTED',
-                Icons.bluetooth,
-              ),
-              statusRow('Error Monitor', 'ACTIVE', Icons.monitor_heart),
-            ],
-          ),
-          icon: Icons.monitor_heart,
-        ),
-        panel(
-          'WELCOME, SIR',
-          const Text(
-            'Your DN WATCH OS control center is ready.',
-            style: TextStyle(color: Colors.white70, fontSize: 15),
-          ),
-          icon: Icons.auto_awesome,
-        ),
-      ],
-    );
-  }
-
-  // ---------------- WATCH PAGE ----------------
-
-  Widget watchPage() {
-    return ListView(
-      padding: const EdgeInsets.all(18),
-      children: [
-        panel(
-          'WATCH CONNECTION',
-          Column(
-            children: [
-              const Icon(Icons.watch, color: Colors.cyanAccent, size: 65),
-              const SizedBox(height: 12),
-              const Text(
-                'Fire-Boltt Axiom',
-                style: TextStyle(fontSize: 21, color: Colors.white),
-              ),
-              const SizedBox(height: 8),
-              Text(
-                connected
-                    ? 'CONNECTED'
-                    : connecting
-                        ? 'CONNECTING...'
-                        : scanning
-                            ? 'SCANNING NEARBY DEVICES...'
-                            : 'READY TO SCAN',
-                style: TextStyle(
-                  color: connected ? Colors.greenAccent : Colors.orangeAccent,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-              const SizedBox(height: 15),
-              outlineButton(
-                scanning ? 'SCANNING...' : 'SCAN NEARBY DEVICES',
-                Icons.bluetooth_searching,
-                scanning || connecting || connected ? null : startBleScan,
-              ),
-              if (scanning) ...[
-                const SizedBox(height: 10),
-                outlineButton('STOP SCAN', Icons.stop, stopBleScan),
-              ],
-              if (connected) ...[
-                const SizedBox(height: 10),
-                outlineButton(
-                  readingInfo ? 'READING...' : 'READ DEVICE INFORMATION',
-                  Icons.memory,
-                  readingInfo ? null : readSafeInformation,
-                ),
-                const SizedBox(height: 10),
-                outlineButton(
-                  'DISCONNECT WATCH',
-                  Icons.link_off,
-                  disconnectWatch,
-                ),
-              ],
-            ],
-          ),
-          icon: Icons.bluetooth,
-        ),
-        panel(
-          'NEARBY BLE DEVICES',
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                'FOUND DEVICES: ${devices.length}',
-                style: TextStyle(color: cyan),
-              ),
-              const SizedBox(height: 12),
-              if (devices.isEmpty)
-                const Text(
-                  'No devices found yet. Start scanning and keep your watch nearby.',
-                  style: TextStyle(color: Colors.white60),
-                )
-              else
-                ...devices.map(deviceCard),
-            ],
-          ),
-          icon: Icons.radar,
-        ),
-        panel(
-          'DISCOVERED SERVICES',
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              statusRow(
-                'Connection',
-                connected ? 'ACTIVE' : 'INACTIVE',
-                Icons.link,
-              ),
-              statusRow(
-                'Services found',
-                '${discoveredServices.length}',
-                Icons.memory,
-              ),
-              const SizedBox(height: 8),
-              if (discoveredServices.isEmpty)
-                const Text(
-                  'Connect to a device to discover its services.',
-                  style: TextStyle(color: Colors.white54),
-                )
-              else
-                ...discoveredServices.map(
-                  (service) => Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 5),
-                    child: SelectableText(
-                      service.serviceUuid.str.toUpperCase(),
-                      style: TextStyle(color: cyan, fontSize: 13),
-                    ),
-                  ),
-                ),
-            ],
-          ),
-          icon: Icons.list_alt,
-        ),
-        if (readValues.isNotEmpty)
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
           panel(
-            'READ DEVICE DATA',
+            'DN WATCH OS',
             Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: readValues.entries.map((entry) {
-                return Container(
-                  width: double.infinity,
-                  margin: const EdgeInsets.only(bottom: 9),
-                  padding: const EdgeInsets.all(10),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFF0B1723),
-                    borderRadius: BorderRadius.circular(10),
-                    border: Border.all(color: Colors.white24),
-                  ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        entry.key,
-                        style: TextStyle(
-                          color: cyan,
-                          fontWeight: FontWeight.bold,
-                          fontSize: 12,
-                        ),
-                      ),
-                      const SizedBox(height: 6),
-                      SelectableText(
-                        entry.value,
-                        style: const TextStyle(color: Colors.white70),
-                      ),
-                    ],
-                  ),
-                );
-              }).toList(),
-            ),
-          ),
-        panel(
-          'DEVICE SAFETY',
-          const Text(
-            'This module only scans, connects, discovers services and reads characteristics marked as readable. It does not send unknown commands, write characteristics, change watch settings or flash firmware.',
-            style: TextStyle(color: Colors.orangeAccent, height: 1.5),
-          ),
-          icon: Icons.shield,
-        ),
-      ],
-    );
-  }
-
-  // ---------------- JARVIS PAGE ----------------
-
-  Widget jarvisPage() {
-    return ListView(
-      padding: const EdgeInsets.all(18),
-      children: [
-        panel(
-          'J.A.R.V.I.S. VOICE CORE',
-          Column(
-            children: [
-              AnimatedContainer(
-                duration: const Duration(milliseconds: 350),
-                height: 142,
-                width: 142,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  color: isListening
-                      ? cyan.withOpacity(.18)
-                      : const Color(0xFF0B1723),
-                  border: Border.all(
-                    color: isListening ? Colors.greenAccent : cyan,
-                    width: isListening ? 3 : 2,
-                  ),
-                  boxShadow: [
-                    BoxShadow(
-                      color: (isListening ? Colors.greenAccent : cyan)
-                          .withOpacity(isListening ? .45 : .18),
-                      blurRadius: isListening ? 35 : 20,
-                      spreadRadius: isListening ? 5 : 1,
-                    ),
-                  ],
-                ),
-                child: Icon(
-                  isListening ? Icons.graphic_eq : Icons.smart_toy,
-                  color: isListening ? Colors.greenAccent : cyan,
+              children: [
+                const Icon(
+                  Icons.watch_rounded,
+                  color: Colors.cyanAccent,
                   size: 75,
                 ),
-              ),
-              const SizedBox(height: 18),
-              const Text(
-                'J.A.R.V.I.S.',
-                style: TextStyle(
-                  color: Colors.white,
-                  fontSize: 25,
-                  fontWeight: FontWeight.bold,
-                  letterSpacing: 3,
+                const SizedBox(height: 12),
+                const Text(
+                  'WELCOME TO DN WATCH OS',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 20,
+                    fontWeight: FontWeight.bold,
+                  ),
                 ),
-              ),
-              const SizedBox(height: 8),
-              Text(
-                isListening
-                    ? 'LISTENING TO YOUR COMMAND...'
-                    : (speechAvailable
-                        ? 'VOICE SYSTEM READY'
-                        : 'INITIALIZING VOICE SYSTEM'),
-                textAlign: TextAlign.center,
-                style: TextStyle(
-                  color: isListening ? Colors.greenAccent : cyan,
-                  fontWeight: FontWeight.bold,
-                  letterSpacing: 1.1,
+                const SizedBox(height: 8),
+                const Text(
+                  'Your Smartwatch Companion',
+                  style: TextStyle(color: Colors.white60),
                 ),
-              ),
-              const SizedBox(height: 18),
-              outlineButton(
-                isListening ? 'LISTENING...' : 'TAP TO SPEAK',
-                isListening ? Icons.hearing : Icons.mic,
-                isListening ? null : startJarvisListening,
-              ),
-              const SizedBox(height: 10),
-              outlineButton(
-                'STOP LISTENING',
-                Icons.stop_circle_outlined,
-                isListening ? stopJarvisListening : null,
-              ),
-              const SizedBox(height: 10),
-              outlineButton(
-                'TEST JARVIS VOICE',
-                Icons.volume_up,
-                () => speak('नमस्ते सर। जार्विस सिस्टम तैयार है।'),
-              ),
-            ],
-          ),
-          icon: Icons.psychology,
-        ),
-        panel(
-          'VOICE INPUT',
-          SelectableText(
-            heardText.isEmpty
-                ? 'Your recognized command will appear here.'
-                : heardText,
-            style: const TextStyle(
-              color: Colors.white70,
-              fontSize: 16,
-              height: 1.5,
-            ),
-          ),
-          icon: Icons.mic_none,
-        ),
-        panel(
-          'JARVIS RESPONSE',
-          Text(
-            jarvisReply,
-            style: const TextStyle(
-              color: Colors.white70,
-              fontSize: 15,
-              height: 1.5,
-            ),
-          ),
-          icon: Icons.chat_bubble_outline,
-        ),
-        panel(
-          'AVAILABLE VOICE COMMANDS',
-          const Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                '• Hello Jarvis — greeting',
-                style: TextStyle(color: Colors.white70, height: 1.8),
-              ),
-              Text(
-                '• Time / Samay batao — current time',
-                style: TextStyle(color: Colors.white70, height: 1.8),
-              ),
-              Text(
-                '• Date / Aaj ki tarikh — date',
-                style: TextStyle(color: Colors.white70, height: 1.8),
-              ),
-              Text(
-                '• Home / Ghar — open Home tab',
-                style: TextStyle(color: Colors.white70, height: 1.8),
-              ),
-              Text(
-                '• Watch / Ghadi — open Watch tab',
-                style: TextStyle(color: Colors.white70, height: 1.8),
-              ),
-              Text(
-                '• Tools — open Tools tab',
-                style: TextStyle(color: Colors.white70, height: 1.8),
-              ),
-              Text(
-                '• Help / Madad — command help',
-                style: TextStyle(color: Colors.white70, height: 1.8),
-              ),
-            ],
-          ),
-          icon: Icons.terminal,
-        ),
-        panel(
-          'IMPORTANT',
-          const Text(
-            'This first JARVIS voice version uses your phone microphone, phone speech-recognition service and phone speaker. It is not running independently inside the Fire-Boltt watch. Speech recognition availability may depend on the Android speech service and language packs installed on your phone.',
-            style: TextStyle(color: Colors.orangeAccent, height: 1.5),
-          ),
-          icon: Icons.info_outline,
-        ),
-      ],
-    );
-  }
-
-  // ---------------- STUDIO PAGE ----------------
-
-  Widget studioPage() {
-    return ListView(
-      padding: const EdgeInsets.all(18),
-      children: [
-        panel(
-          'WATCH STUDIO',
-          Column(
-            children: [
-              Icon(Icons.watch, color: cyan, size: 65),
-              const SizedBox(height: 12),
-              const Text(
-                'Fire-Boltt Axiom',
-                style: TextStyle(color: Colors.white, fontSize: 21),
-              ),
-              const SizedBox(height: 10),
-              const Text(
-                'Watch-face transfer is not available in this version.',
-                textAlign: TextAlign.center,
-                style: TextStyle(color: Colors.white60),
-              ),
-            ],
-          ),
-          icon: Icons.tune,
-        ),
-      ],
-    );
-  }
-
-  // ---------------- DIAGNOSTICS ----------------
-
-  Widget diagnosticsPanel() {
-    return StatefulBuilder(
-      builder: (context, refresh) {
-        return panel(
-          'AUTO ERROR DETECTION',
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text(
-                'Application errors are recorded here.',
-                style: TextStyle(color: Colors.white70, height: 1.5),
-              ),
-              const SizedBox(height: 12),
-              outlineButton(
-                'RUN SAFE APP CHECK',
-                Icons.health_and_safety,
-                () {
-                  Diagnostics.add(
-                    'SAFE CHECK',
-                    'Application check completed. This does not test watch CPU or RAM.',
-                  );
-                  refresh(() {});
-                  showMessage('Safe app check completed.');
-                },
-              ),
-              const SizedBox(height: 10),
-              Row(
-                children: [
-                  Expanded(
-                    child: Text(
-                      'ERROR LOGS: ${Diagnostics.logs.length}',
-                      style: const TextStyle(
-                        color: Colors.white,
+                const SizedBox(height: 18),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Icon(
+                      connected ? Icons.bluetooth_connected : Icons.bluetooth,
+                      color: connected
+                          ? Colors.greenAccent
+                          : Colors.orangeAccent,
+                    ),
+                    const SizedBox(width: 8),
+                    Text(
+                      connected ? 'WATCH CONNECTED' : 'WATCH DISCONNECTED',
+                      style: TextStyle(
+                        color: connected
+                            ? Colors.greenAccent
+                            : Colors.orangeAccent,
                         fontWeight: FontWeight.bold,
                       ),
                     ),
-                  ),
-                  TextButton(
-                    onPressed: () {
-                      Diagnostics.logs.clear();
-                      refresh(() {});
+                  ],
+                ),
+              ],
+            ),
+          ),
+
+          const SizedBox(height: 16),
+
+          panel(
+            'QUICK ACTIONS',
+            Column(
+              children: [
+                SizedBox(
+                  width: double.infinity,
+                  child: outlineButton(
+                    'CONNECT YOUR WATCH',
+                    () {
+                      setState(() {
+                        selectedIndex = 1;
+                      });
                     },
-                    child: const Text('CLEAR'),
                   ),
-                ],
-              ),
-              if (Diagnostics.logs.isEmpty)
-                const Text(
-                  'No errors recorded yet.',
-                  style: TextStyle(color: Colors.greenAccent),
-                )
-              else
-                ...Diagnostics.logs.take(10).map(
-                  (log) => Container(
-                    width: double.infinity,
-                    margin: const EdgeInsets.only(top: 8),
-                    padding: const EdgeInsets.all(10),
-                    decoration: BoxDecoration(
-                      border: Border.all(color: Colors.white24),
-                      borderRadius: BorderRadius.circular(10),
-                    ),
-                    child: SelectableText(
-                      log,
-                      style: const TextStyle(
-                        color: Colors.orangeAccent,
-                        fontSize: 12,
+                ),
+                const SizedBox(height: 10),
+                SizedBox(
+                  width: double.infinity,
+                  child: outlineButton(
+                    'OPEN JARVIS ASSISTANT',
+                    () {
+                      setState(() {
+                        selectedIndex = 2;
+                      });
+                    },
+                  ),
+                ),
+                const SizedBox(height: 10),
+                SizedBox(
+                  width: double.infinity,
+                  child: outlineButton(
+                    'OPEN DEVICE TOOLS',
+                    () {
+                      setState(() {
+                        selectedIndex = 4;
+                      });
+                    },
+                  ),
+                ),
+              ],
+            ),
+          ),
+
+          const SizedBox(height: 16),
+
+          panel(
+            'SYSTEM STATUS',
+            Column(
+              children: [
+                statusRow(
+                  'Bluetooth',
+                  connected ? 'Connected' : 'Disconnected',
+                ),
+                statusRow(
+                  'Nearby Devices',
+                  '${devices.length}',
+                ),
+                statusRow(
+                  'Services Found',
+                  '${discoveredServices.length}',
+                ),
+                statusRow(
+                  'Read Values',
+                  '${readValues.length}',
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ==========================================
+  // WATCH PAGE
+  // ==========================================
+
+  Widget watchPage() {
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          panel(
+            'WATCH CONNECTION',
+            Column(
+              children: [
+                Icon(
+                  connected
+                      ? Icons.watch
+                      : Icons.watch_outlined,
+                  size: 55,
+                  color: Colors.cyanAccent,
+                ),
+                const SizedBox(height: 10),
+                Text(
+                  connected
+                      ? 'WATCH CONNECTED'
+                      : 'NO WATCH CONNECTED',
+                  style: TextStyle(
+                    color: connected
+                        ? Colors.greenAccent
+                        : Colors.orangeAccent,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                const SizedBox(height: 12),
+                if (connectedDevice != null)
+                  Text(
+                    connectedDevice!.platformName.isNotEmpty
+                        ? connectedDevice!.platformName
+                        : connectedDevice!.remoteId.str,
+                    style: const TextStyle(color: Colors.white70),
+                  ),
+                const SizedBox(height: 14),
+                SizedBox(
+                  width: double.infinity,
+                  child: outlineButton(
+                    connected ? 'DISCONNECT WATCH' : 'SCAN FOR WATCH',
+                    connected ? disconnectWatch : startBleScan,
+                  ),
+                ),
+              ],
+            ),
+          ),
+
+          const SizedBox(height: 16),
+
+          panel(
+            'NEARBY BLE DEVICES',
+            Column(
+              children: [
+                Row(
+                  children: [
+                    const Expanded(
+                      child: Text(
+                        'Available Bluetooth devices',
+                        style: TextStyle(color: Colors.white70),
                       ),
                     ),
+                    if (scanning)
+                      const SizedBox(
+                        height: 18,
+                        width: 18,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: Colors.cyanAccent,
+                        ),
+                      ),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                if (devices.isEmpty)
+                  const Padding(
+                    padding: EdgeInsets.all(15),
+                    child: Text(
+                      'No devices found. Start scanning.',
+                      style: TextStyle(color: Colors.white54),
+                    ),
+                  ),
+                ...devices.map((device) => deviceCard(device)),
+                if (scanning)
+                  SizedBox(
+                    width: double.infinity,
+                    child: outlineButton(
+                      'STOP SCANNING',
+                      stopBleScan,
+                    ),
+                  ),
+              ],
+            ),
+          ),
+
+          const SizedBox(height: 16),
+
+          panel(
+            'DISCOVERED SERVICES',
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                if (!connected)
+                  const Text(
+                    'Connect your watch to discover BLE services.',
+                    style: TextStyle(color: Colors.white54),
+                  ),
+                ...discoveredServices.map((service) {
+                  return Container(
+                    margin: const EdgeInsets.only(bottom: 10),
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF101D2B),
+                      borderRadius: BorderRadius.circular(10),
+                      border: Border.all(color: Colors.white12),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'SERVICE: ${service.uuid.str}',
+                          style: const TextStyle(
+                            color: Colors.cyanAccent,
+                            fontWeight: FontWeight.bold,
+                            fontSize: 12,
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        ...service.characteristics.map((characteristic) {
+                          final properties = characteristic.properties;
+                          final features = <String>[];
+
+                          if (properties.read) features.add('READ');
+                          if (properties.write) features.add('WRITE');
+                          if (properties.writeWithoutResponse) {
+                            features.add('WRITE NO RESPONSE');
+                          }
+                          if (properties.notify) features.add('NOTIFY');
+                          if (properties.indicate) features.add('INDICATE');
+
+                          return Padding(
+                            padding: const EdgeInsets.symmetric(vertical: 5),
+                            child: Text(
+                              '${characteristic.uuid.str}\n'
+                              '${features.isEmpty ? "NO PROPERTIES" : features.join(" • ")}',
+                              style: const TextStyle(
+                                color: Colors.white60,
+                                fontSize: 10,
+                                height: 1.5,
+                              ),
+                            ),
+                          );
+                        }),
+                      ],
+                    ),
+                  );
+                }),
+              ],
+            ),
+          ),
+
+          const SizedBox(height: 16),
+
+          firmwareFingerprintPanel(),
+
+          const SizedBox(height: 16),
+
+          panel(
+            'READ DEVICE DATA',
+            Column(
+              children: [
+                SizedBox(
+                  width: double.infinity,
+                  child: outlineButton(
+                    readingInfo ? 'READING...' : 'READ SAFE INFORMATION',
+                    readingInfo ? null : readSafeInformation,
                   ),
                 ),
-            ],
+                const SizedBox(height: 12),
+                if (readValues.isEmpty)
+                  const Text(
+                    'No readable information available.',
+                    style: TextStyle(color: Colors.white54),
+                  ),
+                ...readValues.entries.map(
+                  (entry) => Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 7),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          entry.key,
+                          style: const TextStyle(
+                            color: Colors.cyanAccent,
+                            fontSize: 10,
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          entry.value,
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 12,
+                          ),
+                        ),
+                        const Divider(color: Colors.white12),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
+            ),
           ),
-          icon: Icons.bug_report,
-        );
-      },
+
+          const SizedBox(height: 16),
+
+          panel(
+            'DEVICE SAFETY',
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Icon(
+                  Icons.shield_outlined,
+                  color: Colors.greenAccent,
+                  size: 32,
+                ),
+                const SizedBox(height: 8),
+                const Text(
+                  'READ-ONLY DEVICE INSPECTION',
+                  style: TextStyle(
+                    color: Colors.greenAccent,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                const Text(
+                  'DN WATCH OS does not send unknown commands '
+                  'or flash firmware to your smartwatch.',
+                  style: TextStyle(
+                    color: Colors.white60,
+                    fontSize: 12,
+                    height: 1.5,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
     );
   }
 
-  // ---------------- TOOLS PAGE ----------------
+  // ==========================================
+  // JARVIS PAGE
+  // ==========================================
+
+  Widget jarvisPage() {
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        children: [
+          panel(
+            'J.A.R.V.I.S. ASSISTANT',
+            Column(
+              children: [
+                const Icon(
+                  Icons.graphic_eq,
+                  size: 85,
+                  color: Colors.cyanAccent,
+                ),
+                const SizedBox(height: 15),
+                const Text(
+                  'J.A.R.V.I.S.',
+                  style: TextStyle(
+                    color: Colors.cyanAccent,
+                    fontSize: 25,
+                    fontWeight: FontWeight.bold,
+                    letterSpacing: 3,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                const Text(
+                  'YOUR SMART WATCH COMPANION',
+                  style: TextStyle(
+                    color: Colors.white54,
+                    fontSize: 11,
+                    letterSpacing: 1.5,
+                  ),
+                ),
+                const SizedBox(height: 20),
+                const Text(
+                  'Use the voice assistant controls configured '
+                  'in this application.',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    color: Colors.white70,
+                    height: 1.5,
+                  ),
+                ),
+                const SizedBox(height: 15),
+                const Text(
+                  'Try commands: Hello Jarvis, Time, Date, '
+                  'Home, Watch, Tools, Help, Stop.',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    color: Colors.cyanAccent,
+                    fontSize: 12,
+                    height: 1.7,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ==========================================
+  // STUDIO PAGE
+  // ==========================================
+
+  Widget studioPage() {
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        children: [
+          panel(
+            'WATCH STUDIO',
+            Column(
+              children: [
+                const Icon(
+                  Icons.dashboard_customize,
+                  color: Colors.cyanAccent,
+                  size: 55,
+                ),
+                const SizedBox(height: 12),
+                const Text(
+                  'PERSONALIZE YOUR WATCH EXPERIENCE',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                const SizedBox(height: 10),
+                const Text(
+                  'This section is ready for future watch-face '
+                  'and customization features.',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    color: Colors.white54,
+                    fontSize: 12,
+                    height: 1.5,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ==========================================
+  // DIAGNOSTICS PANEL
+  // ==========================================
+
+  Widget diagnosticsPanel() {
+    return panel(
+      'SYSTEM DIAGNOSTICS',
+      Column(
+        children: [
+          statusRow('Application', 'DN WATCH OS'),
+          statusRow('Bluetooth', connected ? 'CONNECTED' : 'DISCONNECTED'),
+          statusRow('BLE devices', '${devices.length}'),
+          statusRow('BLE services', '${discoveredServices.length}'),
+          statusRow('Read records', '${readValues.length}'),
+          statusRow('Scanner', scanning ? 'ACTIVE' : 'IDLE'),
+          statusRow('Connection process', connecting ? 'ACTIVE' : 'IDLE'),
+        ],
+      ),
+    );
+  }
+
+  // ==========================================
+  // TOOLS PAGE
+  // ==========================================
 
   Widget toolsPage() {
-    return ListView(
-      padding: const EdgeInsets.all(18),
-      children: [
-        Text(
-          'SECURITY & DIAGNOSTICS',
-          style: TextStyle(
-            color: cyan,
-            fontSize: 21,
-            fontWeight: FontWeight.bold,
-          ),
-        ),
-        const SizedBox(height: 18),
-        panel(
-          'SAFETY SHIELD',
-          Column(
-            children: [
-              Icon(
-                Icons.shield,
-                size: 65,
-                color: safetyShield ? cyan : Colors.orange,
-              ),
-              SwitchListTile(
-                contentPadding: EdgeInsets.zero,
-                title: const Text('Enable Safety Shield'),
-                subtitle: const Text(
-                  'App preference only; not a BLE firewall.',
-                  style: TextStyle(color: Colors.white54),
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        children: [
+          panel(
+            'ADVANCED DEVICE TOOLS',
+            Column(
+              children: [
+                const Icon(
+                  Icons.build_circle_outlined,
+                  color: Colors.cyanAccent,
+                  size: 55,
                 ),
-                value: safetyShield,
-                activeColor: cyan,
-                onChanged: (value) => setState(() => safetyShield = value),
-              ),
-            ],
+                const SizedBox(height: 12),
+                SizedBox(
+                  width: double.infinity,
+                  child: outlineButton(
+                    'FIRMWARE FINGERPRINT SCANNER',
+                    () {
+                      setState(() {
+                        selectedIndex = 1;
+                      });
+                    },
+                  ),
+                ),
+                const SizedBox(height: 10),
+                SizedBox(
+                  width: double.infinity,
+                  child: outlineButton(
+                    'READ DEVICE INFORMATION',
+                    connected ? readSafeInformation : null,
+                  ),
+                ),
+                const SizedBox(height: 10),
+                SizedBox(
+                  width: double.infinity,
+                  child: outlineButton(
+                    'DISCONNECT WATCH',
+                    connected ? disconnectWatch : null,
+                  ),
+                ),
+              ],
+            ),
           ),
-          icon: Icons.security,
-        ),
-        diagnosticsPanel(),
-        panel(
-          'SECURITY RULES',
-          Column(
-            children: [
-              statusRow('Unknown commands', 'NOT SENT', Icons.block),
-              statusRow('Firmware flashing', 'DISABLED', Icons.lock),
-              statusRow('Unknown BLE writes', 'DISABLED', Icons.warning),
-              statusRow('Watch reset', 'NOT AVAILABLE', Icons.restart_alt),
-            ],
-          ),
-          icon: Icons.gpp_good,
-        ),
-        panel(
-          'HARDWARE INFORMATION LIMITS',
-          const Text(
-            'Standard BLE services may expose manufacturer, model, firmware and battery information. CPU model, RAM size, internal storage and bootloader details cannot be confirmed unless the watch firmware provides them.',
-            style: TextStyle(color: Colors.orangeAccent, height: 1.5),
-          ),
-          icon: Icons.memory,
-        ),
-      ],
+
+          const SizedBox(height: 16),
+
+          diagnosticsPanel(),
+        ],
+      ),
     );
   }
 
-  // ---------------- MAIN APP ----------------
+  // ==========================================
+  // MAIN APP BUILD
+  // ==========================================
 
   @override
   Widget build(BuildContext context) {
@@ -1314,56 +1563,97 @@ class _WatchHomeState extends State<WatchHome> {
     ];
 
     return Scaffold(
+      backgroundColor: const Color(0xFF010409),
       appBar: AppBar(
-        backgroundColor: const Color(0xFF081522),
-        title: Text(
-          'DN WATCH OS',
-          style: TextStyle(
-            color: cyan,
-            fontWeight: FontWeight.bold,
-            letterSpacing: 2,
-          ),
+        backgroundColor: const Color(0xFF0D1117),
+        elevation: 0,
+        title: const Row(
+          children: [
+            Icon(
+              Icons.watch,
+              color: Colors.cyanAccent,
+            ),
+            SizedBox(width: 10),
+            Text(
+              'DN WATCH OS',
+              style: TextStyle(
+                color: Colors.white,
+                fontWeight: FontWeight.bold,
+                letterSpacing: 1,
+                fontSize: 17,
+              ),
+            ),
+          ],
         ),
-        centerTitle: true,
-      ),
-      body: IndexedStack(
-        index: selectedIndex,
-        children: pages,
-      ),
-      bottomNavigationBar: NavigationBar(
-        backgroundColor: const Color(0xFF081522),
-        indicatorColor: cyan.withOpacity(.15),
-        selectedIndex: selectedIndex,
-        onDestinationSelected: (index) {
-          setState(() => selectedIndex = index);
-        },
-        destinations: const [
-          NavigationDestination(
-            icon: Icon(Icons.home_outlined),
-            selectedIcon: Icon(Icons.home),
-            label: 'Home',
-          ),
-          NavigationDestination(
-            icon: Icon(Icons.watch_outlined),
-            selectedIcon: Icon(Icons.watch),
-            label: 'Watch',
-          ),
-          NavigationDestination(
-            icon: Icon(Icons.smart_toy_outlined),
-            selectedIcon: Icon(Icons.smart_toy),
-            label: 'JARVIS',
-          ),
-          NavigationDestination(
-            icon: Icon(Icons.tune_outlined),
-            selectedIcon: Icon(Icons.tune),
-            label: 'Studio',
-          ),
-          NavigationDestination(
-            icon: Icon(Icons.security_outlined),
-            selectedIcon: Icon(Icons.security),
-            label: 'Tools',
+        actions: [
+          Padding(
+            padding: const EdgeInsets.only(right: 15),
+            child: Icon(
+              connected
+                  ? Icons.bluetooth_connected
+                  : Icons.bluetooth_disabled,
+              color: connected
+                  ? Colors.greenAccent
+                  : Colors.white54,
+            ),
           ),
         ],
+      ),
+
+      body: SafeArea(
+        child: IndexedStack(
+          index: selectedIndex,
+          children: pages,
+        ),
+      ),
+
+      bottomNavigationBar: Container(
+        decoration: const BoxDecoration(
+          color: Color(0xFF0D1117),
+          border: Border(
+            top: BorderSide(
+              color: Colors.white12,
+            ),
+          ),
+        ),
+        child: BottomNavigationBar(
+          currentIndex: selectedIndex,
+          onTap: (index) {
+            setState(() {
+              selectedIndex = index;
+            });
+          },
+          type: BottomNavigationBarType.fixed,
+          backgroundColor: const Color(0xFF0D1117),
+          selectedItemColor: Colors.cyanAccent,
+          unselectedItemColor: Colors.white54,
+          selectedFontSize: 10,
+          unselectedFontSize: 9,
+          items: const [
+            BottomNavigationBarItem(
+              icon: Icon(Icons.home_outlined),
+              activeIcon: Icon(Icons.home),
+              label: 'Home',
+            ),
+            BottomNavigationBarItem(
+              icon: Icon(Icons.watch_outlined),
+              activeIcon: Icon(Icons.watch),
+              label: 'Watch',
+            ),
+            BottomNavigationBarItem(
+              icon: Icon(Icons.graphic_eq),
+              label: 'JARVIS',
+            ),
+            BottomNavigationBarItem(
+              icon: Icon(Icons.dashboard_outlined),
+              label: 'Studio',
+            ),
+            BottomNavigationBarItem(
+              icon: Icon(Icons.build_outlined),
+              label: 'Tools',
+            ),
+          ],
+        ),
       ),
     );
   }
