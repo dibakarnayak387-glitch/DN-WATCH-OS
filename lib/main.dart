@@ -5,6 +5,8 @@ import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:flutter_blue_plus/flutter_blue_plus.dart';
 import 'package:permission_handler/permission_handler.dart';
+import 'package:speech_to_text/speech_to_text.dart' as stt;
+import 'package:flutter_tts/flutter_tts.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -87,9 +89,19 @@ class _WatchHomeState extends State<WatchHome> {
 
   final Map<String, String> readValues = {};
 
+  // JARVIS VOICE CORE
+  final stt.SpeechToText speech = stt.SpeechToText();
+  final FlutterTts tts = FlutterTts();
+
+  bool speechAvailable = false;
+  bool isListening = false;
+  String heardText = '';
+  String jarvisReply = 'Hello Sir. JARVIS voice system is ready.';
+
   @override
   void initState() {
     super.initState();
+    initializeVoice();
 
     scanSubscription = FlutterBluePlus.onScanResults.listen(
       (results) {
@@ -112,8 +124,165 @@ class _WatchHomeState extends State<WatchHome> {
     scanningSubscription?.cancel();
     connectionSubscription?.cancel();
     FlutterBluePlus.stopScan();
+    speech.stop();
+    tts.stop();
     super.dispose();
   }
+
+  // ---------------- JARVIS VOICE FUNCTIONS ----------------
+
+  Future<void> initializeVoice() async {
+    try {
+      speechAvailable = await speech.initialize(
+        onStatus: (status) {
+          if (!mounted) return;
+          setState(() {
+            isListening = status == 'listening';
+          });
+        },
+        onError: (error) {
+          Diagnostics.add('SPEECH ERROR', error.errorMsg);
+          if (mounted) {
+            setState(() => isListening = false);
+            showMessage('Voice recognition error.');
+          }
+        },
+      );
+
+      await tts.setLanguage('hi-IN');
+      await tts.setSpeechRate(0.45);
+      await tts.setPitch(1.0);
+
+      if (mounted) setState(() {});
+    } catch (e) {
+      Diagnostics.add('VOICE INIT ERROR', '$e');
+    }
+  }
+
+  Future<void> speak(String message) async {
+    try {
+      if (mounted) {
+        setState(() {
+          jarvisReply = message;
+          isListening = false;
+        });
+      }
+
+      await speech.stop();
+      await tts.stop();
+      await tts.speak(message);
+    } catch (e) {
+      Diagnostics.add('TTS ERROR', '$e');
+    }
+  }
+
+  Future<void> startJarvisListening() async {
+    try {
+      final permission = await Permission.microphone.request();
+
+      if (!permission.isGranted) {
+        showMessage('Microphone permission required.');
+        return;
+      }
+
+      if (!speechAvailable) {
+        await initializeVoice();
+      }
+
+      if (!speechAvailable) {
+        showMessage('Speech recognition is not available on this phone.');
+        return;
+      }
+
+      await tts.stop();
+
+      setState(() {
+        heardText = '';
+        isListening = true;
+      });
+
+      await speech.listen(
+        onResult: (result) {
+          if (!mounted) return;
+
+          setState(() {
+            heardText = result.recognizedWords;
+          });
+
+          if (result.finalResult) {
+            handleJarvisCommand(result.recognizedWords);
+          }
+        },
+        listenFor: const Duration(seconds: 30),
+        pauseFor: const Duration(seconds: 4),
+        partialResults: true,
+      );
+    } catch (e) {
+      Diagnostics.add('LISTEN ERROR', '$e');
+      if (mounted) setState(() => isListening = false);
+      showMessage('Could not start microphone.');
+    }
+  }
+
+  Future<void> handleJarvisCommand(String command) async {
+    final text = command.toLowerCase().trim();
+
+    if (text.isEmpty) {
+      await speak('Sir, I did not hear anything.');
+      return;
+    }
+
+    if (text.contains('hello') ||
+        text.contains('नमस्ते') ||
+        text.contains('namaste') ||
+        text.contains('jarvis')) {
+      await speak('Hello Sir. JARVIS is online. How can I help you?');
+    } else if (text.contains('time') ||
+        text.contains('समय') ||
+        text.contains('samay') ||
+        text.contains('टाइम')) {
+      final now = DateTime.now();
+      final minute = now.minute.toString().padLeft(2, '0');
+      await speak('Sir, the time is ${now.hour}:$minute.');
+    } else if (text.contains('date') ||
+        text.contains('तारीख') ||
+        text.contains('tarikh') ||
+        text.contains('आज की तारीख')) {
+      final now = DateTime.now();
+      await speak('Today is ${now.day}, ${now.month}, ${now.year}.');
+    } else if (text.contains('home') ||
+        text.contains('होम') ||
+        text.contains('ghar')) {
+      setState(() => selectedIndex = 0);
+      await speak('Opening home screen, Sir.');
+    } else if (text.contains('watch') ||
+        text.contains('घड़ी') ||
+        text.contains('ghadi')) {
+      setState(() => selectedIndex = 1);
+      await speak('Opening watch control, Sir.');
+    } else if (text.contains('tool') || text.contains('टूल')) {
+      setState(() => selectedIndex = 4);
+      await speak('Opening security tools, Sir.');
+    } else if (text.contains('stop') ||
+        text.contains('बंद') ||
+        text.contains('रुको')) {
+      await stopJarvisListening();
+      await speak('Voice recognition stopped, Sir.');
+    } else if (text.contains('help') || text.contains('मदद')) {
+      await speak(
+        'You can ask me for the time, date, home, watch or tools.',
+      );
+    } else {
+      await speak('Sorry Sir. This command is not available yet.');
+    }
+  }
+
+  Future<void> stopJarvisListening() async {
+    await speech.stop();
+    if (mounted) setState(() => isListening = false);
+  }
+
+  // ---------------- COMMON UI ----------------
 
   Widget panel(String title, Widget child, {IconData? icon}) {
     return Container(
@@ -208,6 +377,8 @@ class _WatchHomeState extends State<WatchHome> {
     );
   }
 
+  // ---------------- BLUETOOTH FUNCTIONS ----------------
+
   Future<bool> requestBluetoothPermissions() async {
     try {
       final scan = await Permission.bluetoothScan.request();
@@ -294,7 +465,6 @@ class _WatchHomeState extends State<WatchHome> {
         'Connecting to ${device.remoteId.str}',
       );
 
-      // Required by flutter_blue_plus 2.3.14.
       await device.connect(
         license: License.nonprofit,
         timeout: const Duration(seconds: 15),
@@ -535,8 +705,10 @@ class _WatchHomeState extends State<WatchHome> {
                   ],
                 ),
               ),
-              Text('${result.rssi} dBm',
-                  style: TextStyle(color: cyan, fontSize: 12)),
+              Text(
+                '${result.rssi} dBm',
+                style: TextStyle(color: cyan, fontSize: 12),
+              ),
             ],
           ),
           if (isAxiom)
@@ -561,6 +733,8 @@ class _WatchHomeState extends State<WatchHome> {
       ),
     );
   }
+
+  // ---------------- HOME PAGE ----------------
 
   Widget homePage() {
     return ListView(
@@ -631,6 +805,8 @@ class _WatchHomeState extends State<WatchHome> {
     );
   }
 
+  // ---------------- WATCH PAGE ----------------
+
   Widget watchPage() {
     return ListView(
       padding: const EdgeInsets.all(18),
@@ -692,8 +868,10 @@ class _WatchHomeState extends State<WatchHome> {
           Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text('FOUND DEVICES: ${devices.length}',
-                  style: TextStyle(color: cyan)),
+              Text(
+                'FOUND DEVICES: ${devices.length}',
+                style: TextStyle(color: cyan),
+              ),
               const SizedBox(height: 12),
               if (devices.isEmpty)
                 const Text(
@@ -728,13 +906,15 @@ class _WatchHomeState extends State<WatchHome> {
                   style: TextStyle(color: Colors.white54),
                 )
               else
-                ...discoveredServices.map((service) => Padding(
-                      padding: const EdgeInsets.symmetric(vertical: 5),
-                      child: SelectableText(
-                        service.serviceUuid.str.toUpperCase(),
-                        style: TextStyle(color: cyan, fontSize: 13),
-                      ),
-                    )),
+                ...discoveredServices.map(
+                  (service) => Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 5),
+                    child: SelectableText(
+                      service.serviceUuid.str.toUpperCase(),
+                      style: TextStyle(color: cyan, fontSize: 13),
+                    ),
+                  ),
+                ),
             ],
           ),
           icon: Icons.list_alt,
@@ -788,33 +968,166 @@ class _WatchHomeState extends State<WatchHome> {
     );
   }
 
+  // ---------------- JARVIS PAGE ----------------
+
   Widget jarvisPage() {
     return ListView(
       padding: const EdgeInsets.all(18),
       children: [
         panel(
-          'J.A.R.V.I.S.',
+          'J.A.R.V.I.S. VOICE CORE',
           Column(
             children: [
-              Icon(Icons.smart_toy, color: cyan, size: 75),
-              const SizedBox(height: 15),
+              AnimatedContainer(
+                duration: const Duration(milliseconds: 350),
+                height: 142,
+                width: 142,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: isListening
+                      ? cyan.withOpacity(.18)
+                      : const Color(0xFF0B1723),
+                  border: Border.all(
+                    color: isListening ? Colors.greenAccent : cyan,
+                    width: isListening ? 3 : 2,
+                  ),
+                  boxShadow: [
+                    BoxShadow(
+                      color: (isListening ? Colors.greenAccent : cyan)
+                          .withOpacity(isListening ? .45 : .18),
+                      blurRadius: isListening ? 35 : 20,
+                      spreadRadius: isListening ? 5 : 1,
+                    ),
+                  ],
+                ),
+                child: Icon(
+                  isListening ? Icons.graphic_eq : Icons.smart_toy,
+                  color: isListening ? Colors.greenAccent : cyan,
+                  size: 75,
+                ),
+              ),
+              const SizedBox(height: 18),
               const Text(
-                'JARVIS CORE',
-                style: TextStyle(fontSize: 23, color: Colors.white),
+                'J.A.R.V.I.S.',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 25,
+                  fontWeight: FontWeight.bold,
+                  letterSpacing: 3,
+                ),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                isListening
+                    ? 'LISTENING TO YOUR COMMAND...'
+                    : (speechAvailable
+                        ? 'VOICE SYSTEM READY'
+                        : 'INITIALIZING VOICE SYSTEM'),
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  color: isListening ? Colors.greenAccent : cyan,
+                  fontWeight: FontWeight.bold,
+                  letterSpacing: 1.1,
+                ),
+              ),
+              const SizedBox(height: 18),
+              outlineButton(
+                isListening ? 'LISTENING...' : 'TAP TO SPEAK',
+                isListening ? Icons.hearing : Icons.mic,
+                isListening ? null : startJarvisListening,
               ),
               const SizedBox(height: 10),
-              const Text(
-                'AI assistant integration is planned. Standalone watch AI requires compatible watch hardware and software support.',
-                textAlign: TextAlign.center,
-                style: TextStyle(color: Colors.white60, height: 1.5),
+              outlineButton(
+                'STOP LISTENING',
+                Icons.stop_circle_outlined,
+                isListening ? stopJarvisListening : null,
+              ),
+              const SizedBox(height: 10),
+              outlineButton(
+                'TEST JARVIS VOICE',
+                Icons.volume_up,
+                () => speak('नमस्ते सर। जार्विस सिस्टम तैयार है।'),
               ),
             ],
           ),
           icon: Icons.psychology,
         ),
+        panel(
+          'VOICE INPUT',
+          SelectableText(
+            heardText.isEmpty
+                ? 'Your recognized command will appear here.'
+                : heardText,
+            style: const TextStyle(
+              color: Colors.white70,
+              fontSize: 16,
+              height: 1.5,
+            ),
+          ),
+          icon: Icons.mic_none,
+        ),
+        panel(
+          'JARVIS RESPONSE',
+          Text(
+            jarvisReply,
+            style: const TextStyle(
+              color: Colors.white70,
+              fontSize: 15,
+              height: 1.5,
+            ),
+          ),
+          icon: Icons.chat_bubble_outline,
+        ),
+        panel(
+          'AVAILABLE VOICE COMMANDS',
+          const Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                '• Hello Jarvis — greeting',
+                style: TextStyle(color: Colors.white70, height: 1.8),
+              ),
+              Text(
+                '• Time / Samay batao — current time',
+                style: TextStyle(color: Colors.white70, height: 1.8),
+              ),
+              Text(
+                '• Date / Aaj ki tarikh — date',
+                style: TextStyle(color: Colors.white70, height: 1.8),
+              ),
+              Text(
+                '• Home / Ghar — open Home tab',
+                style: TextStyle(color: Colors.white70, height: 1.8),
+              ),
+              Text(
+                '• Watch / Ghadi — open Watch tab',
+                style: TextStyle(color: Colors.white70, height: 1.8),
+              ),
+              Text(
+                '• Tools — open Tools tab',
+                style: TextStyle(color: Colors.white70, height: 1.8),
+              ),
+              Text(
+                '• Help / Madad — command help',
+                style: TextStyle(color: Colors.white70, height: 1.8),
+              ),
+            ],
+          ),
+          icon: Icons.terminal,
+        ),
+        panel(
+          'IMPORTANT',
+          const Text(
+            'This first JARVIS voice version uses your phone microphone, phone speech-recognition service and phone speaker. It is not running independently inside the Fire-Boltt watch. Speech recognition availability may depend on the Android speech service and language packs installed on your phone.',
+            style: TextStyle(color: Colors.orangeAccent, height: 1.5),
+          ),
+          icon: Icons.info_outline,
+        ),
       ],
     );
   }
+
+  // ---------------- STUDIO PAGE ----------------
 
   Widget studioPage() {
     return ListView(
@@ -843,6 +1156,8 @@ class _WatchHomeState extends State<WatchHome> {
       ],
     );
   }
+
+  // ---------------- DIAGNOSTICS ----------------
 
   Widget diagnosticsPanel() {
     return StatefulBuilder(
@@ -896,22 +1211,24 @@ class _WatchHomeState extends State<WatchHome> {
                   style: TextStyle(color: Colors.greenAccent),
                 )
               else
-                ...Diagnostics.logs.take(10).map((log) => Container(
-                      width: double.infinity,
-                      margin: const EdgeInsets.only(top: 8),
-                      padding: const EdgeInsets.all(10),
-                      decoration: BoxDecoration(
-                        border: Border.all(color: Colors.white24),
-                        borderRadius: BorderRadius.circular(10),
+                ...Diagnostics.logs.take(10).map(
+                  (log) => Container(
+                    width: double.infinity,
+                    margin: const EdgeInsets.only(top: 8),
+                    padding: const EdgeInsets.all(10),
+                    decoration: BoxDecoration(
+                      border: Border.all(color: Colors.white24),
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: SelectableText(
+                      log,
+                      style: const TextStyle(
+                        color: Colors.orangeAccent,
+                        fontSize: 12,
                       ),
-                      child: SelectableText(
-                        log,
-                        style: const TextStyle(
-                          color: Colors.orangeAccent,
-                          fontSize: 12,
-                        ),
-                      ),
-                    )),
+                    ),
+                  ),
+                ),
             ],
           ),
           icon: Icons.bug_report,
@@ -919,6 +1236,8 @@ class _WatchHomeState extends State<WatchHome> {
       },
     );
   }
+
+  // ---------------- TOOLS PAGE ----------------
 
   Widget toolsPage() {
     return ListView(
@@ -981,6 +1300,8 @@ class _WatchHomeState extends State<WatchHome> {
       ],
     );
   }
+
+  // ---------------- MAIN APP ----------------
 
   @override
   Widget build(BuildContext context) {
