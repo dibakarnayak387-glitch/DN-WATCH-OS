@@ -4,7 +4,8 @@ name: DN WATCH OS APK Build
 on:
   workflow_dispatch:
   push:
-    branches: [main]
+    branches:
+      - main
 
 jobs:
   build:
@@ -28,6 +29,21 @@ jobs:
 
       - name: Create Flutter Project
         run: flutter create --org com.dnwatch --project-name dn_watch_os .
+
+      - name: Set Android NDK Version
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path("android/app/build.gradle.kts")
+          s = p.read_text()
+          if 'ndkVersion = "27.0.12077973"' not in s:
+              s = s.replace(
+                  "android {",
+                  'android {\n    ndkVersion = "27.0.12077973"',
+                  1
+              )
+          p.write_text(s)
+          PY
 
       - name: Add Bluetooth LE Packages
         run: |
@@ -64,4 +80,3 @@ jobs:
         with:
           name: DN-WATCH-OS-APK
           path: build/app/outputs/flutter-apk/app-release.apk
-          
