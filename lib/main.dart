@@ -384,24 +384,6 @@ class _WatchHomeState extends State<WatchHome> {
     ),
   );
   }
-    return SizedBox(
-      width: double.infinity,
-      height: 48,
-      child: OutlinedButton.icon(
-        onPressed: action,
-        icon: Icon(icon),
-        label: Text(label),
-        style: OutlinedButton.styleFrom(
-          foregroundColor: cyan,
-          side: BorderSide(color: cyan, width: 1.3),
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(13),
-          ),
-        ),
-      ),
-    );
-  }
-
   void showMessage(String message) {
     if (!mounted) return;
 
@@ -527,7 +509,7 @@ class _WatchHomeState extends State<WatchHome> {
 
       await readSafeInformation();
     } catch (e) {
-    eh  if (!mounted) return;
+   if (!mounted) return;
 
       setState(() {
         connecting = false;
