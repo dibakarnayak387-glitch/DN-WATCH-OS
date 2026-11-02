@@ -1643,7 +1643,7 @@ class _WatchHomeState extends State<WatchHome> {
               label: 'Watch',
             ),
             BottomNavigationBarItem(
-              icon: Icon(Icons.graphic_eq)
+              icon: Icon(Icons.graphic_eq),
               label: 'JARVIS',
             ),
             BottomNavigationBarItem(
