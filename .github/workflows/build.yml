@@ -28,6 +28,37 @@ jobs:
           channel: stable
 
       - name: Create Flutter Project
+      - name: Fix Kotlin Version
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          p = Path("android/settings.gradle.kts")
+          if not p.exists():
+              p = Path("android/settings.gradle")
+
+          s = p.read_text()
+
+          s, count = re.subn(
+              r'(id\(["\']org\.jetbrains\.kotlin\.android["\']\)\s+version\s+["\'])[^"\']+(["\'])',
+              r'\g<1>2.2.20\g<2>',
+              s
+          )
+
+          if count == 0:
+              s, count = re.subn(
+                  r'(id\(["\']kotlin-android["\']\)\s+version\s+["\'])[^"\']+(["\'])',
+                  r'\g<1>2.2.20\g<2>',
+                  s
+              )
+
+          if count == 0:
+              raise SystemExit("Kotlin plugin declaration not found!")
+
+          p.write_text(s)
+          print("Kotlin plugin updated to 2.2.20")
+          PY
         run: flutter create --org com.dnwatch --project-name dn_watch_os .
 
       - name: Configure Android SDK and NDK
