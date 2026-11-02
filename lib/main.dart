@@ -325,7 +325,11 @@ class _WatchHomeState extends State<WatchHome> {
     );
   }
 
-  Widget statusRow(String title, String value, IconData icon) {
+  Widget statusRow(
+  String title,
+  String value, [
+  IconData icon = Icons.info_outline,
+]) {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 8),
       child: Row(
@@ -347,7 +351,39 @@ class _WatchHomeState extends State<WatchHome> {
     );
   }
 
-  Widget outlineButton(String label, IconData icon, VoidCallback? action) {
+  Widget outlineButton(
+  String label,
+  dynamic iconOrAction, [
+  VoidCallback? action,
+]) {
+  final IconData icon;
+  final VoidCallback? callback;
+
+  if (iconOrAction is IconData) {
+    icon = iconOrAction;
+    callback = action;
+  } else {
+    icon = Icons.touch_app;
+    callback = iconOrAction as VoidCallback?;
+  }
+
+  return SizedBox(
+    width: double.infinity,
+    height: 48,
+    child: OutlinedButton.icon(
+      onPressed: callback,
+      icon: Icon(icon),
+      label: Text(label),
+      style: OutlinedButton.styleFrom(
+        foregroundColor: cyan,
+        side: BorderSide(color: cyan, width: 1.3),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(13),
+        ),
+      ),
+    ),
+  );
+  }
     return SizedBox(
       width: double.infinity,
       height: 48,
@@ -423,25 +459,7 @@ class _WatchHomeState extends State<WatchHome> {
       await FlutterBluePlus.startScan(
         timeout: const Duration(seconds: 12),
       );
-
-      FlutterBluePlus.scanResults.listen((results) {
-        if (!mounted) return;
-
-        setState(() {
-          for (final result in results) {
-            final device = result.device;
-
-            final exists = devices.any(
-              (item) => item.remoteId == device.remoteId,
-            );
-
-            if (!exists) {
-              devices.add(device);
-            }
-          }
-        });
-      });
-
+      
       await Future.delayed(const Duration(seconds: 12));
 
       if (!mounted) return;
@@ -486,7 +504,8 @@ class _WatchHomeState extends State<WatchHome> {
     });
 
     try {
-      await device.connect(
+            await device.connect(
+        license: License.nonprofit,
         timeout: const Duration(seconds: 15),
         autoConnect: false,
       );
@@ -508,7 +527,7 @@ class _WatchHomeState extends State<WatchHome> {
 
       await readSafeInformation();
     } catch (e) {
-      if (!mounted) return;
+    eh  if (!mounted) return;
 
       setState(() {
         connecting = false;
@@ -896,7 +915,8 @@ class _WatchHomeState extends State<WatchHome> {
   // BLE DEVICE CARD
   // ==========================================
 
-  Widget deviceCard(BluetoothDevice device) {
+    Widget deviceCard(ScanResult result) {
+    final device = result.device;
     final name = device.platformName.isNotEmpty
         ? device.platformName
         : 'Unknown BLE Device';
@@ -1641,7 +1661,7 @@ class _WatchHomeState extends State<WatchHome> {
               label: 'Watch',
             ),
             BottomNavigationBarItem(
-              icon: Icon(Icons.graphic_eq),
+              icon: Icon(Icons.graphic_eq)
               label: 'JARVIS',
             ),
             BottomNavigationBarItem(
