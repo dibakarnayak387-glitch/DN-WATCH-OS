@@ -699,58 +699,6 @@ class _WatchHomeState extends State<WatchHome> {
     }
   }
   }
-    if (!connected || connectedDevice == null) {
-      showMessage('Connect your watch first.');
-      return;
-    }
-
-    if (readingInfo) return;
-
-    setState(() {
-      readingInfo = true;
-      readValues.clear();
-    });
-
-    try {
-      for (final service in discoveredServices) {
-        for (final characteristic in service.characteristics) {
-          if (!characteristic.properties.read) continue;
-
-          try {
-            final value = await characteristic.read();
-
-            if (value.isNotEmpty) {
-              final label = characteristicName(
-                characteristic.uuid,
-              );
-
-              final serviceId = service.uuid.str;
-              final characteristicId = characteristic.uuid.str;
-
-              readValues[
-                '$label | $serviceId | $characteristicId'
-              ] = interpretValue(value);
-            }
-          } catch (e) {
-            debugPrint('Read skipped: $e');
-          }
-        }
-      }
-
-      if (!mounted) return;
-
-      showMessage('Safe device information scan completed.');
-    } catch (e) {
-      showMessage('Information scan error: $e');
-    } finally {
-      if (mounted) {
-        setState(() {
-          readingInfo = false;
-        });
-      }
-    }
-  }
-
   // ==========================================
   // FIRMWARE FINGERPRINT SCANNER
   // READ ONLY ANALYSIS
