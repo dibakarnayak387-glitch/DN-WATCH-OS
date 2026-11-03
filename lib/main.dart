@@ -609,6 +609,96 @@ class _WatchHomeState extends State<WatchHome> {
   // ==========================================
 
   Future<void> readSafeInformation() async {
+  if (!connected || connectedDevice == null) {
+    showMessage('Connect your watch first.');
+    return;
+  }
+
+  if (readingInfo) return;
+
+  setState(() {
+    readingInfo = true;
+    readValues.clear();
+  });
+
+  try {
+    bool deviceInfoServiceFound = false;
+
+    for (final service in discoveredServices) {
+      final serviceUuid = service.uuid.str
+          .toUpperCase()
+          .replaceAll('-', '');
+
+      final isDeviceInfo =
+          serviceUuid.endsWith('180A');
+
+      if (isDeviceInfo) {
+        deviceInfoServiceFound = true;
+      }
+
+      for (final characteristic in service.characteristics) {
+        if (!characteristic.properties.read) continue;
+
+        try {
+          final value = await characteristic.read();
+
+          if (value.isEmpty) continue;
+
+          final uuid = characteristic.uuid.str
+              .toUpperCase()
+              .replaceAll('-', '');
+
+          String label = characteristicName(
+            characteristic.uuid,
+          );
+
+          if (uuid.endsWith('2A29')) {
+            label = 'Manufacturer Name';
+          } else if (uuid.endsWith('2A24')) {
+            label = 'Model Number';
+          } else if (uuid.endsWith('2A26')) {
+            label = 'Firmware Revision';
+          } else if (uuid.endsWith('2A27')) {
+            label = 'Hardware Revision';
+          } else if (uuid.endsWith('2A28')) {
+            label = 'Software Revision';
+          } else if (uuid.endsWith('2A25')) {
+            label = 'Serial Number';
+          }
+
+          final serviceId = service.uuid.str;
+          final characteristicId = characteristic.uuid.str;
+
+          readValues[
+            '$label | $serviceId | $characteristicId'
+          ] = interpretValue(value);
+
+        } catch (e) {
+          debugPrint('Safe read skipped: $e');
+        }
+      }
+    }
+
+    if (!mounted) return;
+
+    setState(() {});
+
+    showMessage(
+      deviceInfoServiceFound
+          ? 'Device Information scan completed.'
+          : 'Device Information Service 180A not found.',
+    );
+
+  } catch (e) {
+    showMessage('Information scan error: $e');
+  } finally {
+    if (mounted) {
+      setState(() {
+        readingInfo = false;
+      });
+    }
+  }
+  }
     if (!connected || connectedDevice == null) {
       showMessage('Connect your watch first.');
       return;
