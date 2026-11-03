@@ -398,28 +398,29 @@ class _WatchHomeState extends State<WatchHome> {
     // ==========================================
   // BLUETOOTH PERMISSIONS
   // ==========================================
-
   Future<bool> requestBluetoothPermissions() async {
-    try {
-      final permissions = await [
-        Permission.bluetoothScan,
-        Permission.bluetoothConnect,
-        Permission.locationWhenInUse,
-      ].request();
+  try {
+    final permissions = await [
+      Permission.bluetoothScan,
+      Permission.bluetoothConnect,
+    ].request();
 
-      final granted = permissions.values.every(
-        (status) => status.isGranted,
-      );
+    final scanGranted =
+        permissions[Permission.bluetoothScan]?.isGranted ?? false;
 
-      if (!granted) {
-        showMessage('Bluetooth permissions are required.');
-      }
+    final connectGranted =
+        permissions[Permission.bluetoothConnect]?.isGranted ?? false;
 
-      return granted;
-    } catch (e) {
-      showMessage('Permission error: $e');
+    if (!scanGranted || !connectGranted) {
+      showMessage('Bluetooth Scan and Connect permissions required.');
       return false;
     }
+
+    return true;
+  } catch (e) {
+    showMessage('Bluetooth permission error: $e');
+    return false;
+  }
   }
 
   // ==========================================
