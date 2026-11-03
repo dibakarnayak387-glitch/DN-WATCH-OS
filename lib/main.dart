@@ -931,7 +931,269 @@ class _WatchHomeState extends State<WatchHome> {
       ),
     );
   }
+  
 
+  // ==========================================
+  // J.A.R.V.I.S. MASTER DIAGNOSTIC
+  // READ-ONLY WATCH COMPATIBILITY REPORT
+  // ==========================================
+
+  Widget jarvisMasterDiagnosticPanel() {
+    const SizedBox(height: 16),
+jarvisMasterDiagnosticPanel(),
+    final allCharacteristics = discoveredServices
+        .expand((service) => service.characteristics)
+        .toList();
+
+    final feeaServices = discoveredServices.where(
+      (service) => service.uuid.str
+          .toUpperCase()
+          .replaceAll('-', '')
+          .contains('FEEA'),
+    ).toList();
+
+    final canRead = allCharacteristics.any(
+      (c) => c.properties.read,
+    );
+
+    final canWrite = allCharacteristics.any(
+      (c) =>
+          c.properties.write ||
+          c.properties.writeWithoutResponse,
+    );
+
+    final canNotify = allCharacteristics.any(
+      (c) =>
+          c.properties.notify ||
+          c.properties.indicate,
+    );
+
+    final feeaFound = feeaServices.isNotEmpty;
+
+    final phoneBridge = connected && feeaFound &&
+        canWrite && canNotify;
+
+    Widget reportRow(String label, String value) {
+      return Padding(
+        padding: const EdgeInsets.symmetric(vertical: 7),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Expanded(
+              child: Text(
+                label,
+                style: const TextStyle(
+                  color: Colors.white60,
+                  fontSize: 12,
+                ),
+              ),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                value,
+                textAlign: TextAlign.right,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 12,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    Widget sectionTitle(String title) {
+      return Padding(
+        padding: const EdgeInsets.only(
+          top: 15,
+          bottom: 7,
+        ),
+        child: Text(
+          title,
+          style: const TextStyle(
+            color: Colors.cyanAccent,
+            fontSize: 12,
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+      );
+    }
+
+    return panel(
+      'J.A.R.V.I.S. MASTER DIAGNOSTIC',
+      Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Icon(
+            Icons.psychology,
+            color: Colors.cyanAccent,
+            size: 42,
+          ),
+
+          const SizedBox(height: 10),
+
+          const Text(
+            'COMPLETE WATCH ANALYSIS',
+            style: TextStyle(
+              color: Colors.cyanAccent,
+              fontWeight: FontWeight.bold,
+              fontSize: 13,
+            ),
+          ),
+
+          const SizedBox(height: 12),
+
+          sectionTitle('01 — CONNECTION STATUS'),
+
+          reportRow(
+            'Bluetooth connection',
+            connected ? 'CONNECTED' : 'DISCONNECTED',
+          ),
+
+          reportRow(
+            'Device name',
+            connectedDevice?.platformName.isNotEmpty == true
+                ? connectedDevice!.platformName
+                : 'NOT DETECTED',
+          ),
+
+          reportRow(
+            'BLE services',
+            '${discoveredServices.length}',
+          ),
+
+          reportRow(
+            'Characteristics',
+            '${allCharacteristics.length}',
+          ),
+
+          sectionTitle('02 — DEVICE COMMUNICATION'),
+
+          reportRow(
+            'FEEA protocol service',
+            feeaFound ? 'DETECTED' : 'NOT DETECTED',
+          ),
+
+          reportRow(
+            'Read capability',
+            canRead ? 'AVAILABLE' : 'NOT FOUND',
+          ),
+
+          reportRow(
+            'Write capability',
+            canWrite ? 'AVAILABLE' : 'NOT FOUND',
+          ),
+
+          reportRow(
+            'Notify / Indicate',
+            canNotify ? 'AVAILABLE' : 'NOT FOUND',
+          ),
+
+          sectionTitle('03 — PHONE JARVIS BRIDGE'),
+
+          reportRow(
+            'Phone voice engine',
+            speechAvailable ? 'AVAILABLE' : 'NOT DETECTED',
+          ),
+
+          reportRow(
+            'BLE communication potential',
+            phoneBridge
+                ? 'POTENTIAL — TEST REQUIRED'
+                : 'NOT ESTABLISHED',
+          ),
+
+          reportRow(
+            'Protocol exchange',
+            'NOT VERIFIED',
+          ),
+
+          sectionTitle('04 — WATCH APP SUPPORT'),
+
+          reportRow(
+            'Custom APK installation',
+            'UNKNOWN',
+          ),
+
+          reportRow(
+            'Watch operating system',
+            'NOT IDENTIFIED',
+          ),
+
+          reportRow(
+            'Watch CPU / RAM',
+            'NOT EXPOSED',
+          ),
+
+          reportRow(
+            'Standalone AI capability',
+            'NOT ESTABLISHED',
+          ),
+
+          sectionTitle('05 — FINAL JARVIS VERDICT'),
+
+          reportRow(
+            'Phone-connected JARVIS',
+            phoneBridge
+                ? 'POSSIBLE — NEEDS TESTING'
+                : 'NOT CONFIRMED',
+          ),
+
+          reportRow(
+            'Native watch JARVIS app',
+            'UNKNOWN',
+          ),
+
+          reportRow(
+            'Independent watch JARVIS',
+            'UNKNOWN',
+          ),
+
+          const SizedBox(height: 14),
+
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: Colors.orange.withOpacity(0.08),
+              border: Border.all(
+                color: Colors.orangeAccent,
+              ),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: const Text(
+              'IMPORTANT SAFETY NOTICE\n'
+              'This report uses discovered BLE information only. '
+              'Write and Notify properties do not prove that '
+              'custom apps or standalone AI can run on the watch. '
+              'No unknown BLE commands or firmware modifications '
+              'are performed.',
+              style: TextStyle(
+                color: Colors.orangeAccent,
+                fontSize: 11,
+                height: 1.5,
+              ),
+            ),
+          ),
+
+          const SizedBox(height: 14),
+
+          SizedBox(
+            width: double.infinity,
+            child: outlineButton(
+              readingInfo
+                  ? 'ANALYZING...'
+                  : 'RUN DIAGNOSTIC AGAIN',
+              readingInfo ? null : readSafeInformation,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
   // ==========================================
   // BLE DEVICE CARD
   // ==========================================
