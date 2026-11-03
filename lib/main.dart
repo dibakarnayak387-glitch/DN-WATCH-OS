@@ -938,9 +938,7 @@ class _WatchHomeState extends State<WatchHome> {
   // READ-ONLY WATCH COMPATIBILITY REPORT
   // ==========================================
 
-  Widget jarvisMasterDiagnosticPanel() {
-    const SizedBox(height: 16),
-jarvisMasterDiagnosticPanel(),
+  Widget jarvisMasterDiagnosticPanel() 
     final allCharacteristics = discoveredServices
         .expand((service) => service.characteristics)
         .toList();
@@ -1572,6 +1570,10 @@ jarvisMasterDiagnosticPanel(),
           const SizedBox(height: 16),
 
           firmwareFingerprintPanel(),
+
+          const SizedBox(height: 16),
+          
+          jarvisMasterDiagnosticPanel(),
 
           const SizedBox(height: 16),
 
