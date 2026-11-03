@@ -938,7 +938,7 @@ class _WatchHomeState extends State<WatchHome> {
   // READ-ONLY WATCH COMPATIBILITY REPORT
   // ==========================================
 
-  Widget jarvisMasterDiagnosticPanel() 
+   Widget jarvisMasterDiagnosticPanel() {
     final allCharacteristics = discoveredServices
         .expand((service) => service.characteristics)
         .toList();
