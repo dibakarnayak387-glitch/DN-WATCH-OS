@@ -704,6 +704,230 @@ class _WatchHomeState extends State<WatchHome> {
   // READ ONLY ANALYSIS
   // ==========================================
 
+  // ==========================================
+  // FINAL STANDALONE JARVIS COMPATIBILITY SCANNER
+  // READ-ONLY - NO UNKNOWN BLE COMMANDS
+  // ==========================================
+
+  Widget standaloneCompatibilityPanel() {
+    final services = discoveredServices;
+    final connectedNow = connected && connectedDevice != null;
+
+    final allCharacteristics = services
+        .expand((service) => service.characteristics)
+        .toList();
+
+    final feeaServices = services.where((service) {
+      final id = service.uuid.str.toUpperCase().replaceAll('-', '');
+      return id.contains('FEEA');
+    }).toList();
+
+    final hasRead = allCharacteristics.any(
+      (c) => c.properties.read,
+    );
+
+    final hasWrite = allCharacteristics.any(
+      (c) =>
+          c.properties.write ||
+          c.properties.writeWithoutResponse,
+    );
+
+    final hasNotify = allCharacteristics.any(
+      (c) =>
+          c.properties.notify ||
+          c.properties.indicate,
+    );
+
+    // These are phone app capabilities, NOT proof of watch hardware.
+    final phoneSpeech = speechAvailable;
+
+    final results = <String, String>{
+      'Bluetooth Connection':
+          connectedNow ? 'DETECTED' : 'NOT CONNECTED',
+      'FEEA Protocol Service':
+          feeaServices.isNotEmpty ? 'DETECTED' : 'NOT DETECTED',
+      'BLE Read':
+          hasRead ? 'AVAILABLE' : 'NOT FOUND',
+      'BLE Write':
+          hasWrite ? 'AVAILABLE' : 'NOT FOUND',
+      'BLE Notify / Indicate':
+          hasNotify ? 'AVAILABLE' : 'NOT FOUND',
+      'Phone Speech Engine':
+          phoneSpeech ? 'AVAILABLE' : 'NOT INITIALIZED',
+      'Watch Operating System':
+          'NOT EXPOSED BY BLE',
+      'Watch CPU / RAM':
+          'NOT EXPOSED BY BLE',
+      'Watch App Installation':
+          'NOT VERIFIED',
+      'Independent Watch Microphone':
+          'NOT VERIFIED',
+      'Independent Watch Speaker':
+          'NOT VERIFIED',
+      'Standalone AI Runtime':
+          'NOT VERIFIED',
+    };
+
+    final watchOsKnown = false;
+    final watchHardwareKnown = false;
+    final independentAudioKnown = false;
+    final appRuntimeKnown = false;
+    final standaloneAiKnown = false;
+
+    final allRequiredEvidence =
+        watchOsKnown &&
+        watchHardwareKnown &&
+        independentAudioKnown &&
+        appRuntimeKnown &&
+        standaloneAiKnown;
+
+    final definitelyBlocked =
+        connectedNow == false &&
+        services.isEmpty;
+
+    final verdict = definitelyBlocked
+        ? 'NOT COMPATIBLE - TEST INCOMPLETE'
+        : allRequiredEvidence
+            ? 'COMPATIBLE'
+            : 'UNVERIFIED - MORE DEVICE EVIDENCE NEEDED';
+
+    Color verdictColor() {
+      if (verdict == 'COMPATIBLE') return Colors.greenAccent;
+      if (verdict.startsWith('NOT COMPATIBLE')) {
+        return Colors.redAccent;
+      }
+      return Colors.orangeAccent;
+    }
+
+    Widget resultRow(String title, String value) {
+      final positive = value == 'DETECTED' ||
+          value == 'AVAILABLE';
+
+      return Padding(
+        padding: const EdgeInsets.symmetric(vertical: 7),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Icon(
+              positive ? Icons.check_circle_outline : Icons.info_outline,
+              color: positive ? Colors.greenAccent : Colors.orangeAccent,
+              size: 18,
+            ),
+            const SizedBox(width: 9),
+            Expanded(
+              child: Text(
+                title,
+                style: const TextStyle(color: Colors.white70),
+              ),
+            ),
+            const SizedBox(width: 8),
+            Flexible(
+              child: Text(
+                value,
+                textAlign: TextAlign.end,
+                style: TextStyle(
+                  color: positive ? Colors.greenAccent : Colors.orangeAccent,
+                  fontSize: 11,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    return panel(
+      'FINAL STANDALONE JARVIS SCANNER',
+      Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Icon(
+            Icons.memory,
+            size: 48,
+            color: Colors.cyanAccent,
+          ),
+          const SizedBox(height: 10),
+          const Text(
+            'READ-ONLY HARDWARE & OS COMPATIBILITY TEST',
+            style: TextStyle(
+              color: Colors.cyanAccent,
+              fontWeight: FontWeight.bold,
+              fontSize: 12,
+            ),
+          ),
+          const SizedBox(height: 12),
+
+          ...results.entries.map(
+            (entry) => resultRow(entry.key, entry.value),
+          ),
+
+          const Divider(color: Colors.white24, height: 25),
+
+          const Text(
+            'FINAL COMPATIBILITY VERDICT',
+            style: TextStyle(
+              color: Colors.white70,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+          const SizedBox(height: 10),
+
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(15),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(13),
+              border: Border.all(color: verdictColor()),
+              color: verdictColor().withOpacity(.08),
+            ),
+            child: Text(
+              verdict,
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                color: verdictColor(),
+                fontWeight: FontWeight.bold,
+                fontSize: 15,
+              ),
+            ),
+          ),
+
+          const SizedBox(height: 12),
+
+          const Text(
+            'IMPORTANT: BLE Read, Write and Notify only prove '
+            'that Bluetooth characteristics exist. They do not prove '
+            'that the watch supports Android apps, independent audio, '
+            'CPU/RAM access or standalone AI. Unknown information '
+            'must be verified using manufacturer documentation or '
+            'a supported watch development interface.',
+            style: TextStyle(
+              color: Colors.white60,
+              fontSize: 11,
+              height: 1.6,
+            ),
+          ),
+
+          const SizedBox(height: 14),
+
+          SizedBox(
+            width: double.infinity,
+            child: outlineButton(
+              'REFRESH COMPATIBILITY REPORT',
+              Icons.refresh,
+              () {
+                setState(() {});
+                showMessage(
+                  'Compatibility report refreshed.',
+                );
+              },
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget firmwareFingerprintPanel() {
     String findValue(String label) {
       for (final entry in readValues.entries) {
@@ -1576,6 +1800,8 @@ class _WatchHomeState extends State<WatchHome> {
           jarvisMasterDiagnosticPanel(),
 
           const SizedBox(height: 16),
+
+          standaloneCompatibilityPanel(),
 
           panel(
             'READ DEVICE DATA',
