@@ -57,7 +57,7 @@ jobs:
           for pattern in patterns:
               s, n = re.subn(
                   pattern,
-                  r'\g<1>2.2.20\g<2>',
+                  r'\g<1>2.4.21\g<2>',
                   s
               )
               count += n
