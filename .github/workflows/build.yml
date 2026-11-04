@@ -68,7 +68,38 @@ jobs:
           p.write_text(s)
           print("Kotlin plugin updated to 2.2.20")
           PY
+      - name: Fix Kotlin Compiler Target
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
 
+          p = Path("android/app/build.gradle.kts")
+          s = p.read_text()
+
+          s, count = re.subn(
+              r'kotlinOptions\s*\{[^}]*\}',
+              '',
+              s,
+              count=1,
+              flags=re.S
+          )
+
+          if count == 0:
+              raise SystemExit("Old kotlinOptions block not found!")
+
+          s += """
+
+          kotlin {
+              compilerOptions {
+                  jvmTarget = org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_11
+              }
+          }
+          """
+
+          p.write_text(s)
+          print("Kotlin compiler target fixed.")
+          PY
       - name: Configure Android SDK and NDK
         run: |
           python3 - <<'PY'
