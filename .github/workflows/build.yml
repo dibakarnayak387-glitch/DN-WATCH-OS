@@ -142,7 +142,7 @@ jobs:
           p.write_text(s)
           print("Bluetooth permissions configured.")
           PY
-             - name: Configure Firebase
+      - name: Configure Firebase
         run: |
           python3 - <<'PY'
           from pathlib import Path
