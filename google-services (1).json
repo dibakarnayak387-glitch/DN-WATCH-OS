@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "739679890746",
+    "project_id": "dn-watch-os",
+    "storage_bucket": "dn-watch-os.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:739679890746:android:94ce77f1e2a1e2e860b403",
+        "android_client_info": {
+          "package_name": "com.dnwatch.dn_watch_os"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBmaeAZ32M1fPvG5Nh_cXhiPpkYkF6MzGY"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
