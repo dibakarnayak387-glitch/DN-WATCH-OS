@@ -142,7 +142,42 @@ jobs:
           p.write_text(s)
           print("Bluetooth permissions configured.")
           PY
+             - name: Configure Firebase
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
 
+          src = Path("google-services (1).json")
+          if not src.exists():
+              raise SystemExit("Firebase JSON file not found!")
+
+          dst = Path("android/app/google-services.json")
+          dst.parent.mkdir(parents=True, exist_ok=True)
+          dst.write_bytes(src.read_bytes())
+
+          p = Path("android/settings.gradle.kts")
+          s = p.read_text()
+          s = s.replace(
+              "id(\"com.android.application\") version",
+              "id(\"com.google.gms.google-services\") version \"4.5.0\" apply false\n    id(\"com.android.application\") version",
+              1
+          )
+          p.write_text(s)
+
+          p = Path("android/app/build.gradle.kts")
+          s = p.read_text()
+          s = s.replace(
+              "    id(\"com.android.application\")",
+              "    id(\"com.android.application\")\n    id(\"com.google.gms.google-services\")",
+              1
+          )
+          p.write_text(s)
+          print("Firebase configured.")
+          PY
+
+      - name: Add Firebase Packages
+        run: |
+          flutter pub add firebase_core cloud_firestore firebase_auth
       - name: Get Dependencies
         run: flutter pub get
 
